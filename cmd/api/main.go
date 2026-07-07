@@ -15,9 +15,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	logger := logger.NewLogger(cfg.Env)
+	logs := logger.NewLogger(cfg.Env)
 
-	err = app.Run(context.Background(), cfg, logger)
+	err = app.Run(context.Background(), cfg, logs)
 	if err != nil {
 		log.Fatal(err)
 	}
