@@ -9,9 +9,9 @@ import (
 )
 
 type Config struct {
-	Env         string `env:"ENV" env-required:"true"`
-	DatabaseURL string `env:"DATABASE_URL" env-required:"true"`
-
+	Env               string        `env:"ENV" env-required:"true"`
+	DatabaseURL       string        `env:"DATABASE_URL" env-required:"true"`
+	RedisURL          string        `env:"REDIS_URL" env-required:"true"`
 	HTTPAddress       string        `env:"HTTP_ADDRESS" env-required:"true"`
 	ReadTimeout       time.Duration `env:"HTTP_READ_TIMEOUT" env-default:"5s"`
 	WriteTimeout      time.Duration `env:"HTTP_WRITE_TIMEOUT" env-default:"10s"`
