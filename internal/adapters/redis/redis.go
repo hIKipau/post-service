@@ -10,7 +10,7 @@ import (
 
 type Redis struct {
 	client *redis.Client
-	log    *slog.Logger
+	logger *slog.Logger
 }
 
 func New(ctx context.Context, redisURL string, logger *slog.Logger) (*Redis, error) {
@@ -27,7 +27,7 @@ func New(ctx context.Context, redisURL string, logger *slog.Logger) (*Redis, err
 	}
 
 	logger.Info("Successfully connected to Redis")
-	return &Redis{client: rdb, log: logger}, nil
+	return &Redis{client: rdb, logger: logger}, nil
 }
 
 func (rdb *Redis) Close() error {

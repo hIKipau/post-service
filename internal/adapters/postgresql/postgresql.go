@@ -9,8 +9,8 @@ import (
 )
 
 type PostgreSQL struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool   *pgxpool.Pool
+	logger *slog.Logger
 }
 
 func New(ctx context.Context, databaseUrl string, logger *slog.Logger) (*PostgreSQL, error) {
@@ -27,7 +27,7 @@ func New(ctx context.Context, databaseUrl string, logger *slog.Logger) (*Postgre
 	}
 
 	logger.Info("Successfully connected to PostgreSQL")
-	return &PostgreSQL{pool: pool, log: logger}, nil
+	return &PostgreSQL{pool: pool, logger: logger}, nil
 }
 
 func (pgsql *PostgreSQL) Close() {
