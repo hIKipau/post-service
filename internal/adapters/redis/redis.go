@@ -22,7 +22,11 @@ func New(ctx context.Context, redisURL string, logger *slog.Logger) (*Redis, err
 	}
 	rdb := redis.NewClient(opts)
 
-	if err := rdb.Ping(ctx).Err(); err != nil {
+	if err = rdb.Ping(ctx).Err(); err != nil {
+		closeErr := rdb.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("error connecting to Redis: %w; close Redis client: %w", err, closeErr)
+		}
 		return nil, fmt.Errorf("error connecting to Redis: %w", err)
 	}
 
