@@ -22,7 +22,7 @@ type Config struct {
 
 func MustLoad() (*Config, error) {
 
-	err := godotenv.Load(".env.local")
+	err := godotenv.Load(".env")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load .env: %w", err)
 	}

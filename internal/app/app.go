@@ -52,7 +52,7 @@ func Run(ctx context.Context, config *config.Config, logger *slog.Logger) error 
 	}
 	logger.Debug("JWK was fetched successfully")
 
-	verivier := jwt.NewVerifier(publicKey, kid, logger)
+	verifier := jwt.NewVerifier(publicKey, kid, logger)
 
 	logger.Info("Server Started")
 	sig := make(chan os.Signal, 1)
