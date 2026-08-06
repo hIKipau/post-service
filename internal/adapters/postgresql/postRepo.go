@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type PostRepo struct {
+type Repo struct {
 	*PostgreSQL
 }
 
@@ -31,20 +31,46 @@ type Post struct {
 	DeletedAt *time.Time
 }
 
-func NewPostRepo(db *PostgreSQL) *PostRepo {
-	return &PostRepo{PostgreSQL: db}
+func NewPostRepo(db *PostgreSQL) *Repo {
+	return &Repo{PostgreSQL: db}
 }
 
-func (repo *PostRepo) CreatePost(
+func (repo *Repo) CreatePost(
 	ctx context.Context,
 	post Post,
 ) error {
+	repo.logger.Info(
+		"starting post creation",
+		"post_id", post.ID,
+		"author_id", post.AuthorID,
+	)
+
+	repo.logger.Debug(
+		"received post creation parameters",
+		"post_id", post.ID,
+		"author_id", post.AuthorID,
+		"root_id", post.RootID,
+		"parent_id", post.ParentID,
+		"text_length", len(post.Text),
+	)
+
 	tx, err := repo.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("error beginning transaction: %w", err)
+		repo.logger.Error(
+			"failed to begin post creation transaction",
+			"error", err,
+			"post_id", post.ID,
+		)
+
+		return fmt.Errorf(
+			"begin transaction to create post %s: %w",
+			post.ID,
+			err,
+		)
 	}
 	defer tx.Rollback(ctx)
-	const query = `
+
+	const insertQuery = `
 		INSERT INTO posts (
 			id,
 			author_id,
@@ -59,9 +85,10 @@ func (repo *PostRepo) CreatePost(
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
+
 	result, err := tx.Exec(
 		ctx,
-		query,
+		insertQuery,
 		post.ID,
 		post.AuthorID,
 		post.Text,
@@ -74,46 +101,154 @@ func (repo *PostRepo) CreatePost(
 		post.DeletedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("insert post: %w", err)
+		repo.logger.Error(
+			"failed to insert post into database",
+			"error", err,
+			"post_id", post.ID,
+			"author_id", post.AuthorID,
+		)
+
+		return fmt.Errorf(
+			"insert post %s into database: %w",
+			post.ID,
+			err,
+		)
 	}
+
 	if result.RowsAffected() != 1 {
-		return fmt.Errorf("insert post: expected 1 affected row")
+		repo.logger.Error(
+			"post insertion affected an unexpected number of rows",
+			"post_id", post.ID,
+			"affected_rows", result.RowsAffected(),
+		)
+
+		return fmt.Errorf(
+			"insert post %s: expected 1 affected row, received %d",
+			post.ID,
+			result.RowsAffected(),
+		)
 	}
+
+	repo.logger.Debug(
+		"post inserted into database",
+		"post_id", post.ID,
+		"parent_id", post.ParentID,
+	)
 
 	if post.ParentID != nil {
-		const incrementQuery = `UPDATE posts
+		const incrementQuery = `
+			UPDATE posts
 			SET reply_count = reply_count + 1
 			WHERE id = $1
-			  AND deleted_at IS NULL`
+			  AND deleted_at IS NULL
+		`
 
-		result, err := tx.Exec(ctx, incrementQuery, post.ParentID)
+		result, err = tx.Exec(
+			ctx,
+			incrementQuery,
+			post.ParentID,
+		)
 		if err != nil {
-			return fmt.Errorf("insert post: %w", err)
+			repo.logger.Error(
+				"failed to increment parent post reply count",
+				"error", err,
+				"post_id", post.ID,
+				"parent_id", post.ParentID,
+			)
+
+			return fmt.Errorf(
+				"increment reply count of parent post %s after creating reply %s: %w",
+				*post.ParentID,
+				post.ID,
+				err,
+			)
 		}
+
 		if result.RowsAffected() != 1 {
-			return fmt.Errorf("insert post: expected 1 affected row")
+			repo.logger.Debug(
+				"parent post reply count was not updated",
+				"post_id", post.ID,
+				"parent_id", post.ParentID,
+				"affected_rows", result.RowsAffected(),
+			)
+
+			return fmt.Errorf(
+				"increment reply count of parent post %s: parent post does not exist or is deleted",
+				*post.ParentID,
+			)
 		}
+
+		repo.logger.Debug(
+			"parent post reply count incremented",
+			"post_id", post.ID,
+			"parent_id", post.ParentID,
+		)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		repo.logger.Error(
+			"failed to commit post creation transaction",
+			"error", err,
+			"post_id", post.ID,
+			"parent_id", post.ParentID,
+		)
+
+		return fmt.Errorf(
+			"commit creation transaction for post %s: %w",
+			post.ID,
+			err,
+		)
 	}
+
+	repo.logger.Info(
+		"post created successfully",
+		"post_id", post.ID,
+	)
+
+	repo.logger.Debug(
+		"completed post creation",
+		"post_id", post.ID,
+		"author_id", post.AuthorID,
+		"root_id", post.RootID,
+		"parent_id", post.ParentID,
+	)
 
 	return nil
 }
 
-func (repo *PostRepo) DeletePost(
+func (repo *Repo) DeletePost(
 	ctx context.Context,
 	postID uuid.UUID,
 	authorID uuid.UUID,
 ) error {
+	repo.logger.Info(
+		"starting post deletion",
+		"post_id", postID,
+	)
+
+	repo.logger.Debug(
+		"received post deletion parameters",
+		"post_id", postID,
+		"author_id", authorID,
+	)
+
 	tx, err := repo.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("error beginning transaction: %w", err)
+		repo.logger.Error(
+			"failed to begin post deletion transaction",
+			"error", err,
+			"post_id", postID,
+		)
+
+		return fmt.Errorf(
+			"begin transaction to delete post %s: %w",
+			postID,
+			err,
+		)
 	}
 	defer tx.Rollback(ctx)
 
-	const query = `
+	const deleteQuery = `
 		UPDATE posts
 		SET
 			text = '',
@@ -124,19 +259,48 @@ func (repo *PostRepo) DeletePost(
 		  AND deleted_at IS NULL
 		RETURNING parent_id
 	`
+
 	var parentID *uuid.UUID
+
 	err = tx.QueryRow(
 		ctx,
-		query,
+		deleteQuery,
 		postID,
 		authorID,
 	).Scan(&parentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("post not found or access denied")
+			repo.logger.Debug(
+				"post deletion did not affect any rows",
+				"post_id", postID,
+				"author_id", authorID,
+			)
+
+			return fmt.Errorf(
+				"delete post %s: post does not exist, is already deleted, or belongs to another author",
+				postID,
+			)
 		}
-		return fmt.Errorf("soft delete post: %w", err)
+
+		repo.logger.Error(
+			"failed to soft delete post",
+			"error", err,
+			"post_id", postID,
+			"author_id", authorID,
+		)
+
+		return fmt.Errorf(
+			"execute soft delete query for post %s: %w",
+			postID,
+			err,
+		)
 	}
+
+	repo.logger.Debug(
+		"post marked as deleted",
+		"post_id", postID,
+		"parent_id", parentID,
+	)
 
 	if parentID != nil {
 		const decrementQuery = `
@@ -145,23 +309,93 @@ func (repo *PostRepo) DeletePost(
 			WHERE id = $1
 			  AND deleted_at IS NULL
 		`
+
 		result, err := tx.Exec(ctx, decrementQuery, parentID)
 		if err != nil {
-			return fmt.Errorf("decrement parent reply count: %w", err)
+			repo.logger.Error(
+				"failed to decrement parent post reply count",
+				"error", err,
+				"post_id", postID,
+				"parent_id", parentID,
+			)
+
+			return fmt.Errorf(
+				"decrement reply count for parent post %s after deleting reply %s: %w",
+				*parentID,
+				postID,
+				err,
+			)
 		}
+
 		if result.RowsAffected() != 1 {
-			return fmt.Errorf("parent post not found")
+			repo.logger.Debug(
+				"parent reply count was not updated",
+				"post_id", postID,
+				"parent_id", parentID,
+				"affected_rows", result.RowsAffected(),
+			)
+
+			return fmt.Errorf(
+				"decrement reply count for parent post %s: parent post does not exist or is deleted",
+				*parentID,
+			)
 		}
+
+		repo.logger.Debug(
+			"parent post reply count decremented",
+			"post_id", postID,
+			"parent_id", parentID,
+		)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-	return nil
+		repo.logger.Error(
+			"failed to commit post deletion transaction",
+			"error", err,
+			"post_id", postID,
+			"parent_id", parentID,
+		)
 
+		return fmt.Errorf(
+			"commit deletion transaction for post %s: %w",
+			postID,
+			err,
+		)
+	}
+
+	repo.logger.Info(
+		"post deleted successfully",
+		"post_id", postID,
+	)
+
+	repo.logger.Debug(
+		"completed post deletion",
+		"post_id", postID,
+		"author_id", authorID,
+		"parent_id", parentID,
+	)
+
+	return nil
 }
 
-func (repo *PostRepo) UpdatePost(ctx context.Context, postID uuid.UUID, authorID uuid.UUID, text string) error {
+func (repo *Repo) UpdatePost(
+	ctx context.Context,
+	postID uuid.UUID,
+	authorID uuid.UUID,
+	text string,
+) error {
+	repo.logger.Info(
+		"starting post update",
+		"post_id", postID,
+	)
+
+	repo.logger.Debug(
+		"received post update parameters",
+		"post_id", postID,
+		"author_id", authorID,
+		"text_length", len(text),
+	)
+
 	const query = `
 		UPDATE posts
 		SET
@@ -172,24 +406,102 @@ func (repo *PostRepo) UpdatePost(ctx context.Context, postID uuid.UUID, authorID
 		  AND deleted_at IS NULL
 	`
 
-	result, err := repo.pool.Exec(ctx, query, text, postID, authorID)
+	result, err := repo.pool.Exec(
+		ctx,
+		query,
+		text,
+		postID,
+		authorID,
+	)
 	if err != nil {
-		return fmt.Errorf("update post: %w", err)
+		repo.logger.Error(
+			"failed to execute post update query",
+			"error", err,
+			"post_id", postID,
+			"author_id", authorID,
+		)
+
+		return fmt.Errorf(
+			"execute update query for post %s: %w",
+			postID,
+			err,
+		)
 	}
+
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("post not found or access denied")
+		repo.logger.Debug(
+			"post update did not affect any rows",
+			"post_id", postID,
+			"author_id", authorID,
+		)
+
+		return fmt.Errorf(
+			"update post %s: post does not exist, is deleted, or belongs to another author",
+			postID,
+		)
 	}
+
+	repo.logger.Info(
+		"post updated successfully",
+		"post_id", postID,
+	)
+
+	repo.logger.Debug(
+		"completed post update",
+		"post_id", postID,
+		"author_id", authorID,
+		"affected_rows", result.RowsAffected(),
+	)
 
 	return nil
 }
 
-func (repo *PostRepo) GetChildrenPosts(ctx context.Context, parentID uuid.UUID, pageSize, page int64) ([]Post, error) {
-	if page < 0 {
+func (repo *Repo) GetChildrenPosts(
+	ctx context.Context,
+	parentID uuid.UUID,
+	pageSize int64,
+	page int64,
+) ([]Post, error) {
+	repo.logger.Info(
+		"starting child posts retrieval",
+		"parent_id", parentID,
+		"page", page,
+		"page_size", pageSize,
+	)
 
-		return nil, fmt.Errorf("page cannot be negative")
+	repo.logger.Debug(
+		"received child posts retrieval parameters",
+		"parent_id", parentID,
+		"page", page,
+		"page_size", pageSize,
+	)
+
+	if page < 0 {
+		repo.logger.Debug(
+			"child posts retrieval rejected because page is negative",
+			"page", page,
+		)
+
+		return nil, fmt.Errorf(
+			"retrieve child posts: page must not be negative, received %d",
+			page,
+		)
+	}
+
+	if pageSize <= 0 {
+		repo.logger.Debug(
+			"child posts retrieval rejected because page size is invalid",
+			"page_size", pageSize,
+		)
+
+		return nil, fmt.Errorf(
+			"retrieve child posts: page size must be greater than zero, received %d",
+			pageSize,
+		)
 	}
 
 	offset := page * pageSize
+
 	const query = `
 		SELECT
 			id,
@@ -212,16 +524,38 @@ func (repo *PostRepo) GetChildrenPosts(ctx context.Context, parentID uuid.UUID, 
 		LIMIT $2
 		OFFSET $3
 	`
-	rows, err := repo.pool.Query(ctx, query, parentID, offset, pageSize)
+
+	rows, err := repo.pool.Query(
+		ctx,
+		query,
+		parentID,
+		pageSize,
+		offset,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("get children posts: %w", err)
+		repo.logger.Error(
+			"failed to execute child posts retrieval query",
+			"error", err,
+			"parent_id", parentID,
+			"page", page,
+			"page_size", pageSize,
+			"offset", offset,
+		)
+
+		return nil, fmt.Errorf(
+			"execute query to retrieve child posts for parent %s: %w",
+			parentID,
+			err,
+		)
 	}
 	defer rows.Close()
-	var posts []Post
+
+	posts := make([]Post, 0, pageSize)
+
 	for rows.Next() {
 		var post Post
-		if err := rows.Scan(
 
+		if err := rows.Scan(
 			&post.ID,
 			&post.AuthorID,
 			&post.Text,
@@ -233,47 +567,112 @@ func (repo *PostRepo) GetChildrenPosts(ctx context.Context, parentID uuid.UUID, 
 			&post.UpdatedAt,
 			&post.DeletedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan child post: %w", err)
+			repo.logger.Error(
+				"failed to read child post fields from database row",
+				"error", err,
+				"parent_id", parentID,
+			)
+
+			return nil, fmt.Errorf(
+				"read child post fields from database result for parent %s: %w",
+				parentID,
+				err,
+			)
 		}
+
 		posts = append(posts, post)
 	}
+
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate children posts: %w", err)
+		repo.logger.Error(
+			"failed while iterating over child posts",
+			"error", err,
+			"parent_id", parentID,
+		)
+
+		return nil, fmt.Errorf(
+			"iterate over child posts returned for parent %s: %w",
+			parentID,
+			err,
+		)
 	}
+
+	repo.logger.Info(
+		"child posts retrieved successfully",
+		"parent_id", parentID,
+		"page", page,
+		"retrieved_count", len(posts),
+	)
+
+	repo.logger.Debug(
+		"completed child posts retrieval",
+		"parent_id", parentID,
+		"page", page,
+		"page_size", pageSize,
+		"offset", offset,
+		"retrieved_count", len(posts),
+	)
+
 	return posts, nil
 }
 
-func (repo *PostRepo) GetPostsByIDs(ctx context.Context, posts []uuid.UUID) ([]Post, error) {
-	if len(posts) == 0 {
-		return []Post{}, fmt.Errorf("0 posts recieved")
+func (repo *Repo) GetPostsByIDs(
+	ctx context.Context,
+	postIDs []uuid.UUID,
+) ([]Post, error) {
+	repo.logger.Info(
+		"starting posts retrieval by IDs",
+		"posts_count", len(postIDs),
+	)
+
+	repo.logger.Debug(
+		"received post IDs for retrieval",
+		"post_ids", postIDs,
+	)
+
+	if len(postIDs) == 0 {
+		repo.logger.Debug("posts retrieval skipped because ID list is empty")
+
+		return []Post{}, nil
 	}
 
-	const query = `
-		SELECT
-			id,
-			author_id,
-			text,
-			root_id,
-			parent_id,
-			reply_count,
-			like_count,
-			created_at,
-			updated_at,
-			deleted_at
-		FROM posts
-		WHERE id = ANY($1::uuid[])
+	const query = `SELECT
+    	p.id,
+    	p.author_id,
+    	p.text,
+    	p.root_id,
+    	p.parent_id,
+    	p.reply_count,
+   		p.like_count,
+    	p.created_at,
+    	p.updated_at,
+    	p.deleted_at
+	FROM unnest($1::uuid[]) WITH ORDINALITY AS ids(id, position)
+	JOIN posts p ON p.id = ids.id
+	ORDER BY ids.position
 	`
-	rows, err := repo.pool.Query(ctx, query, posts)
-	if err != nil {
 
-		return nil, fmt.Errorf("get posts by ids: %w", err)
+	rows, err := repo.pool.Query(ctx, query, postIDs)
+	if err != nil {
+		repo.logger.Error(
+			"failed to execute posts retrieval query",
+			"error", err,
+			"posts_count", len(postIDs),
+		)
+
+		return nil, fmt.Errorf(
+			"execute query to retrieve posts by IDs: %w",
+			err,
+		)
 	}
 	defer rows.Close()
 
-	result := make([]Post, 0, len(posts))
+	result := make([]Post, 0, len(postIDs))
+
 	for rows.Next() {
 		var post Post
-		err := rows.Scan(
+
+		if err := rows.Scan(
 			&post.ID,
 			&post.AuthorID,
 			&post.Text,
@@ -284,12 +683,44 @@ func (repo *PostRepo) GetPostsByIDs(ctx context.Context, posts []uuid.UUID) ([]P
 			&post.CreatedAt,
 			&post.UpdatedAt,
 			&post.DeletedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scan post: %w", err)
+		); err != nil {
+			repo.logger.Error(
+				"failed to read post fields from database row",
+				"error", err,
+			)
+
+			return nil, fmt.Errorf(
+				"read post fields from database result: %w",
+				err,
+			)
 		}
+
 		result = append(result, post)
 	}
+
+	if err := rows.Err(); err != nil {
+		repo.logger.Error(
+			"failed while iterating over retrieved posts",
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"iterate over posts returned by database: %w",
+			err,
+		)
+	}
+
+	repo.logger.Info(
+		"posts retrieved successfully",
+		"requested_count", len(postIDs),
+		"retrieved_count", len(result),
+	)
+
+	repo.logger.Debug(
+		"completed posts retrieval by IDs",
+		"requested_post_ids", postIDs,
+		"retrieved_posts", result,
+	)
 
 	return result, nil
 }

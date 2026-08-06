@@ -1,9 +1,9 @@
 package redis
 
 type PostCache struct {
-	*Redis
+	*Cache
 }
 
-func NewPostCache(cache *Redis) *PostCache {
-	return &PostCache{Redis: cache}
+func NewPostCache(cache *Cache) *PostCache {
+	return &PostCache{Cache: cache}
 }
