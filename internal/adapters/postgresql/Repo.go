@@ -39,7 +39,7 @@ type FeedCandidate struct {
 	RepliesCount int64
 }
 
-func NewPostRepo(db *PostgreSQL) *Repo {
+func NewRepo(db *PostgreSQL) *Repo {
 	return &Repo{PostgreSQL: db}
 }
 

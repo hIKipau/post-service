@@ -40,8 +40,10 @@ func Run(ctx context.Context, config *config.Config, logger *slog.Logger) error 
 	logger.Debug("Cache initialized")
 
 	logger.Debug("Creating Repo and Cache objects...")
-	postRepo := postgresql.NewPostRepo(pgsql)
-	postCache := redis.NewPostCache(rdb)
+	postRepo := postgresql.NewRepo(pgsql)
+	defer postRepo.Close()
+	postCache := redis.NewCache(rdb)
+	defer postCache.Close()
 	logger.Debug("Repo and Cache initialized")
 
 	fetcher := jwt.NewJWKSFetcher(logger)
