@@ -47,11 +47,6 @@ func (repo *Repo) CreatePost(
 	ctx context.Context,
 	post Post,
 ) error {
-	repo.logger.Info(
-		"starting post creation",
-		"post_id", post.ID,
-		"author_id", post.AuthorID,
-	)
 
 	repo.logger.Debug(
 		"received post creation parameters",
@@ -208,11 +203,6 @@ func (repo *Repo) CreatePost(
 		)
 	}
 
-	repo.logger.Info(
-		"post created successfully",
-		"post_id", post.ID,
-	)
-
 	repo.logger.Debug(
 		"completed post creation",
 		"post_id", post.ID,
@@ -229,11 +219,6 @@ func (repo *Repo) DeletePost(
 	postID uuid.UUID,
 	authorID uuid.UUID,
 ) error {
-	repo.logger.Info(
-		"starting post deletion",
-		"post_id", postID,
-	)
-
 	repo.logger.Debug(
 		"received post deletion parameters",
 		"post_id", postID,
@@ -371,11 +356,6 @@ func (repo *Repo) DeletePost(
 		)
 	}
 
-	repo.logger.Info(
-		"post deleted successfully",
-		"post_id", postID,
-	)
-
 	repo.logger.Debug(
 		"completed post deletion",
 		"post_id", postID,
@@ -392,11 +372,6 @@ func (repo *Repo) UpdatePost(
 	authorID uuid.UUID,
 	text string,
 ) error {
-	repo.logger.Info(
-		"starting post update",
-		"post_id", postID,
-	)
-
 	repo.logger.Debug(
 		"received post update parameters",
 		"post_id", postID,
@@ -449,11 +424,6 @@ func (repo *Repo) UpdatePost(
 		)
 	}
 
-	repo.logger.Info(
-		"post updated successfully",
-		"post_id", postID,
-	)
-
 	repo.logger.Debug(
 		"completed post update",
 		"post_id", postID,
@@ -470,12 +440,6 @@ func (repo *Repo) GetChildrenPosts(
 	pageSize int64,
 	page int64,
 ) ([]Post, error) {
-	repo.logger.Info(
-		"starting child posts retrieval",
-		"parent_id", parentID,
-		"page", page,
-		"page_size", pageSize,
-	)
 
 	repo.logger.Debug(
 		"received child posts retrieval parameters",
@@ -605,13 +569,6 @@ func (repo *Repo) GetChildrenPosts(
 		)
 	}
 
-	repo.logger.Info(
-		"child posts retrieved successfully",
-		"parent_id", parentID,
-		"page", page,
-		"retrieved_count", len(posts),
-	)
-
 	repo.logger.Debug(
 		"completed child posts retrieval",
 		"parent_id", parentID,
@@ -628,10 +585,6 @@ func (repo *Repo) GetPostsByIDs(
 	ctx context.Context,
 	postIDs []uuid.UUID,
 ) ([]Post, error) {
-	repo.logger.Info(
-		"starting posts retrieval by IDs",
-		"posts_count", len(postIDs),
-	)
 
 	repo.logger.Debug(
 		"received post IDs for retrieval",
@@ -718,12 +671,6 @@ func (repo *Repo) GetPostsByIDs(
 		)
 	}
 
-	repo.logger.Info(
-		"posts retrieved successfully",
-		"requested_count", len(postIDs),
-		"retrieved_count", len(result),
-	)
-
 	repo.logger.Debug(
 		"completed posts retrieval by IDs",
 		"requested_post_ids", postIDs,
@@ -734,10 +681,7 @@ func (repo *Repo) GetPostsByIDs(
 }
 
 func (repo *Repo) GetFeedCandidatesIDs(ctx context.Context, userID uuid.UUID, limit int64) ([]FeedCandidate, error) {
-	repo.logger.Info(
-		"starting generating feed IDs",
-		"user_id", userID, "limit", limit,
-	)
+
 	if limit >= 0 {
 		return []FeedCandidate{}, fmt.Errorf("cant getting feed candidates, limit is negative: %d", limit)
 	}
@@ -781,12 +725,6 @@ func (repo *Repo) GetFeedCandidatesIDs(ctx context.Context, userID uuid.UUID, li
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("cant iterate feed candidates: %w", err)
 	}
-
-	repo.logger.Info(
-		"feed candidates received",
-		"user_id", userID,
-		"count", len(candidates),
-	)
 
 	return candidates, nil
 }
