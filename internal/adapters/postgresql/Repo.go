@@ -31,6 +31,14 @@ type Post struct {
 	DeletedAt *time.Time
 }
 
+type FeedCandidate struct {
+	PostID       uuid.UUID
+	AuthorID     uuid.UUID
+	CreatedAt    time.Time
+	LikesCount   int64
+	RepliesCount int64
+}
+
 func NewPostRepo(db *PostgreSQL) *Repo {
 	return &Repo{PostgreSQL: db}
 }
@@ -723,4 +731,62 @@ func (repo *Repo) GetPostsByIDs(
 	)
 
 	return result, nil
+}
+
+func (repo *Repo) GetFeedCandidatesIDs(ctx context.Context, userID uuid.UUID, limit int64) ([]FeedCandidate, error) {
+	repo.logger.Info(
+		"starting generating feed IDs",
+		"user_id", userID, "limit", limit,
+	)
+	if limit >= 0 {
+		return []FeedCandidate{}, fmt.Errorf("cant getting feed candidates, limit is negative: %d", limit)
+	}
+
+	const query = `
+		SELECT
+    	id,
+    	author_id,
+    	created_at,
+    	likes_count,
+    	replies_count
+	FROM posts
+	WHERE author_id <> $1
+	ORDER BY created_at DESC, id DESC
+	LIMIT $2;
+	`
+
+	rows, err := repo.pool.Query(ctx, query, userID, limit)
+	if err != nil {
+		return []FeedCandidate{}, fmt.Errorf("cant exec query: %w", err)
+	}
+	defer rows.Close()
+
+	candidates := make([]FeedCandidate, 0, limit)
+
+	for rows.Next() {
+		var candidate FeedCandidate
+		err = rows.Scan(
+			&candidate.PostID,
+			&candidate.AuthorID,
+			&candidate.CreatedAt,
+			&candidate.LikesCount,
+			&candidate.RepliesCount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("cant scan feed candidate: %w", err)
+		}
+		candidates = append(candidates, candidate)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("cant iterate feed candidates: %w", err)
+	}
+
+	repo.logger.Info(
+		"feed candidates received",
+		"user_id", userID,
+		"count", len(candidates),
+	)
+
+	return candidates, nil
 }

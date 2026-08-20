@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
-type Cache struct {
+type Redis struct {
 	client *redis.Client
 	logger *slog.Logger
 }
 
-func New(ctx context.Context, redisURL string, logger *slog.Logger) (*Cache, error) {
+func New(ctx context.Context, redisURL string, logger *slog.Logger) (*Redis, error) {
 	logger.Info("Connecting to Redis...")
 
 	opts, err := redis.ParseURL(redisURL)
@@ -32,18 +31,9 @@ func New(ctx context.Context, redisURL string, logger *slog.Logger) (*Cache, err
 	}
 
 	logger.Info("Successfully connected to Redis")
-	return &Cache{client: rdb, logger: logger}, nil
+	return &Redis{client: rdb, logger: logger}, nil
 }
 
-func (rdb *Cache) Close() error {
+func (rdb *Redis) Close() error {
 	return rdb.client.Close()
 }
-
-func (rdb *Cache) GetFeedIDs(userID uuid.UUID) ([]uuid.UUID, error) {
-
-}
-func (rdb *Cache) GetPostStatistics(postID uuid.UUID) ([]uuid.UUID, error) {
-
-}
-
-func (rdb *Cache) UpdatePostCounts(postID uuid.UUID) ([]uuid.UUID, error) {}
