@@ -191,11 +191,7 @@ func (repo *Repo) CreatePost(
 	return nil
 }
 
-func (repo *Repo) DeletePost(
-	ctx context.Context,
-	postID uuid.UUID,
-	authorID uuid.UUID,
-) error {
+func (repo *Repo) DeletePost(ctx context.Context, postID uuid.UUID, authorID uuid.UUID) error {
 	repo.logger.Debug(
 		"received post deletion parameters",
 		"post_id", postID,
@@ -343,17 +339,12 @@ func (repo *Repo) DeletePost(
 	return nil
 }
 
-func (repo *Repo) UpdatePost(
-	ctx context.Context,
-	postID uuid.UUID,
-	authorID uuid.UUID,
-	text string,
-) error {
+func (repo *Repo) UpdatePost(ctx context.Context, post domain.Post) error {
 	repo.logger.Debug(
 		"received post update parameters",
-		"post_id", postID,
-		"author_id", authorID,
-		"text_length", len(text),
+		"post_id", post.ID,
+		"author_id", post.AuthorID,
+		"text_length", len(post.Text),
 	)
 
 	const query = `
@@ -362,28 +353,28 @@ func (repo *Repo) UpdatePost(
 			text = $1,
 			updated_at = now()
 		WHERE id = $2
-		  AND author_id = $3
-		  AND deleted_at IS NULL
+			AND author_id = $3
+			AND deleted_at IS NULL
 	`
 
 	result, err := repo.pool.Exec(
 		ctx,
 		query,
-		text,
-		postID,
-		authorID,
+		post.Text,
+		post.ID,
+		post.AuthorID,
 	)
 	if err != nil {
 		repo.logger.Error(
 			"failed to execute post update query",
 			"error", err,
-			"post_id", postID,
-			"author_id", authorID,
+			"post_id", post.ID,
+			"author_id", post.AuthorID,
 		)
 
 		return fmt.Errorf(
 			"execute update query for post %s: %w",
-			postID,
+			post.ID,
 			err,
 		)
 	}
@@ -391,20 +382,20 @@ func (repo *Repo) UpdatePost(
 	if result.RowsAffected() == 0 {
 		repo.logger.Debug(
 			"post update did not affect any rows",
-			"post_id", postID,
-			"author_id", authorID,
+			"post_id", post.ID,
+			"author_id", post.AuthorID,
 		)
 
 		return fmt.Errorf(
 			"update post %s: post does not exist, is deleted, or belongs to another author",
-			postID,
+			post.ID,
 		)
 	}
 
 	repo.logger.Debug(
 		"completed post update",
-		"post_id", postID,
-		"author_id", authorID,
+		"post_id", post.ID,
+		"author_id", post.AuthorID,
 		"affected_rows", result.RowsAffected(),
 	)
 

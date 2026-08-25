@@ -27,7 +27,7 @@ func NewUsecase(repo *postgresql.Repo, cache *redis.Cache, logger *slog.Logger) 
 
 type Repository interface {
 	CreatePost(ctx context.Context, post domain.Post) error
-	UpdatePost(ctx context.Context, postID, authorID uuid.UUID, text string) error
+	UpdatePost(ctx context.Context, post domain.Post) error
 	DeletePost(ctx context.Context, postID, authorID uuid.UUID) error
 
 	GetPostsByIDs(ctx context.Context, postIDs []uuid.UUID) ([]domain.Post, error)
