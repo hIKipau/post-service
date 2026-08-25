@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
+	"post-service/internal/domain"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,38 +14,13 @@ type Repo struct {
 	*PostgreSQL
 }
 
-type Post struct {
-	ID       uuid.UUID
-	AuthorID uuid.UUID
-
-	Text string
-
-	RootID   *uuid.UUID
-	ParentID *uuid.UUID
-
-	ReplyCount int64
-	LikeCount  int64
-
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt *time.Time
-}
-
-type FeedCandidate struct {
-	PostID       uuid.UUID
-	AuthorID     uuid.UUID
-	CreatedAt    time.Time
-	LikesCount   int64
-	RepliesCount int64
-}
-
 func NewRepo(db *PostgreSQL) *Repo {
 	return &Repo{PostgreSQL: db}
 }
 
 func (repo *Repo) CreatePost(
 	ctx context.Context,
-	post Post,
+	post domain.Post,
 ) error {
 
 	repo.logger.Debug(
@@ -82,6 +57,7 @@ func (repo *Repo) CreatePost(
 			parent_id,
 			reply_count,
 			like_count,
+		    dislike_count,
 			created_at,
 			updated_at,
 			deleted_at
@@ -99,6 +75,7 @@ func (repo *Repo) CreatePost(
 		post.ParentID,
 		post.ReplyCount,
 		post.LikeCount,
+		post.DislikeCount,
 		post.CreatedAt,
 		post.UpdatedAt,
 		post.DeletedAt,
@@ -439,7 +416,7 @@ func (repo *Repo) GetChildrenPosts(
 	parentID uuid.UUID,
 	pageSize int64,
 	page int64,
-) ([]Post, error) {
+) ([]domain.Post, error) {
 
 	repo.logger.Debug(
 		"received child posts retrieval parameters",
@@ -483,6 +460,7 @@ func (repo *Repo) GetChildrenPosts(
 			parent_id,
 			reply_count,
 			like_count,
+			dislike_count,
 			created_at,
 			updated_at,
 			deleted_at
@@ -522,10 +500,10 @@ func (repo *Repo) GetChildrenPosts(
 	}
 	defer rows.Close()
 
-	posts := make([]Post, 0, pageSize)
+	posts := make([]domain.Post, 0, pageSize)
 
 	for rows.Next() {
-		var post Post
+		var post domain.Post
 
 		if err := rows.Scan(
 			&post.ID,
@@ -535,6 +513,7 @@ func (repo *Repo) GetChildrenPosts(
 			&post.ParentID,
 			&post.ReplyCount,
 			&post.LikeCount,
+			&post.DislikeCount,
 			&post.CreatedAt,
 			&post.UpdatedAt,
 			&post.DeletedAt,
@@ -584,7 +563,7 @@ func (repo *Repo) GetChildrenPosts(
 func (repo *Repo) GetPostsByIDs(
 	ctx context.Context,
 	postIDs []uuid.UUID,
-) ([]Post, error) {
+) ([]domain.Post, error) {
 
 	repo.logger.Debug(
 		"received post IDs for retrieval",
@@ -594,7 +573,7 @@ func (repo *Repo) GetPostsByIDs(
 	if len(postIDs) == 0 {
 		repo.logger.Debug("posts retrieval skipped because ID list is empty")
 
-		return []Post{}, nil
+		return []domain.Post{}, nil
 	}
 
 	const query = `SELECT
@@ -605,6 +584,7 @@ func (repo *Repo) GetPostsByIDs(
     	p.parent_id,
     	p.reply_count,
    		p.like_count,
+   		p.dislike_count,
     	p.created_at,
     	p.updated_at,
     	p.deleted_at
@@ -628,10 +608,10 @@ func (repo *Repo) GetPostsByIDs(
 	}
 	defer rows.Close()
 
-	result := make([]Post, 0, len(postIDs))
+	result := make([]domain.Post, 0, len(postIDs))
 
 	for rows.Next() {
-		var post Post
+		var post domain.Post
 
 		if err := rows.Scan(
 			&post.ID,
@@ -641,6 +621,7 @@ func (repo *Repo) GetPostsByIDs(
 			&post.ParentID,
 			&post.ReplyCount,
 			&post.LikeCount,
+			&post.DislikeCount,
 			&post.CreatedAt,
 			&post.UpdatedAt,
 			&post.DeletedAt,
@@ -680,10 +661,10 @@ func (repo *Repo) GetPostsByIDs(
 	return result, nil
 }
 
-func (repo *Repo) GetFeedCandidatesIDs(ctx context.Context, userID uuid.UUID, limit int64) ([]FeedCandidate, error) {
+func (repo *Repo) GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit int64) ([]domain.FeedCandidate, error) {
 
 	if limit >= 0 {
-		return []FeedCandidate{}, fmt.Errorf("cant getting feed candidates, limit is negative: %d", limit)
+		return []domain.FeedCandidate{}, fmt.Errorf("cant getting feed candidates, limit is negative: %d", limit)
 	}
 
 	const query = `
@@ -691,6 +672,7 @@ func (repo *Repo) GetFeedCandidatesIDs(ctx context.Context, userID uuid.UUID, li
     	id,
     	author_id,
     	created_at,
+    	likes_count,
     	likes_count,
     	replies_count
 	FROM posts
@@ -701,19 +683,20 @@ func (repo *Repo) GetFeedCandidatesIDs(ctx context.Context, userID uuid.UUID, li
 
 	rows, err := repo.pool.Query(ctx, query, userID, limit)
 	if err != nil {
-		return []FeedCandidate{}, fmt.Errorf("cant exec query: %w", err)
+		return []domain.FeedCandidate{}, fmt.Errorf("cant exec query: %w", err)
 	}
 	defer rows.Close()
 
-	candidates := make([]FeedCandidate, 0, limit)
+	candidates := make([]domain.FeedCandidate, 0, limit)
 
 	for rows.Next() {
-		var candidate FeedCandidate
+		var candidate domain.FeedCandidate
 		err = rows.Scan(
 			&candidate.PostID,
 			&candidate.AuthorID,
 			&candidate.CreatedAt,
 			&candidate.LikesCount,
+			&candidate.DislikesCount,
 			&candidate.RepliesCount,
 		)
 		if err != nil {

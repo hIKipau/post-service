@@ -19,9 +19,6 @@ func NewCache(redis *Redis) *Cache {
 	return &Cache{Redis: redis}
 }
 
-//кэш хранит лайки и кол-во репли.
-//кэш хранит просмотренные юзером посты(с ttl - до недели)
-
 // SetFeed caches the user's feed from a slice of UUIDs with the specified TTL.
 func (cache *Cache) SetFeed(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID, ttl time.Duration) error {
 	key := "feed:" + userID.String()
@@ -76,6 +73,29 @@ func (cache *Cache) SetFeed(ctx context.Context, userID uuid.UUID, postIDs []uui
 	)
 
 	return nil
+}
+
+// GetFeedLength returns length of the user's cached feed.
+func (cache *Cache) GetFeedLength(ctx context.Context, userID uuid.UUID) (int64, error) {
+	key := "feed:" + userID.String()
+	cache.logger.Debug(
+		"Getting user feed length from cache",
+		"user_id", userID,
+		"key", key,
+	)
+
+	length, err := cache.client.LLen(ctx, key).Result()
+	if err != nil {
+		cache.logger.Error(
+			"Failed to get feed length from cache",
+			"error", err,
+			"user_id", userID,
+			"key", key,
+		)
+		return -1, fmt.Errorf("get feed length: %w", err)
+	}
+
+	return length, nil
 }
 
 // GetFeed returns up to limit post UUIDs from the user's cached feed.
@@ -409,8 +429,8 @@ func (cache *Cache) RemoveDislike(ctx context.Context, userID uuid.UUID, postID 
 	return nil
 }
 
-// GetPostLikes returns the like count for each specified post.
-func (cache *Cache) GetPostLikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+// GetPostsLikes returns the like count for each specified post.
+func (cache *Cache) GetPostsLikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
 	cache.logger.Debug(
 		"Getting post like counts from cache",
 		"posts_count", len(postIDs),
@@ -452,8 +472,8 @@ func (cache *Cache) GetPostLikes(ctx context.Context, postIDs []uuid.UUID) (map[
 	return result, nil
 }
 
-// GetPostDislikes returns the dislike count for each specified post.
-func (cache *Cache) GetPostDislikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+// GetPostsDislikes returns the dislike count for each specified post.
+func (cache *Cache) GetPostsDislikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
 	cache.logger.Debug(
 		"Getting post dislike counts from cache",
 		"posts_count", len(postIDs),
@@ -525,55 +545,81 @@ func (cache *Cache) SetPostRepliesCount(
 	return nil
 }
 
-// GetPostRepliesCount returns the cached reply count for the specified post.
-func (cache *Cache) GetPostRepliesCount(
+// GetPostsRepliesCount returns the cached reply count for each specified post.
+func (cache *Cache) GetPostsRepliesCount(
 	ctx context.Context,
-	postID uuid.UUID,
-) (int64, error) {
-	key := "post:replies:count:" + postID.String()
-
+	postIDs []uuid.UUID,
+) (map[uuid.UUID]int64, error) {
 	cache.logger.Debug(
-		"Getting post replies count from cache",
-		"post_id", postID,
+		"Getting post replies counts from cache",
+		"posts_count", len(postIDs),
 	)
 
-	value, err := cache.client.Get(ctx, key).Result()
-	if errors.Is(err, redis.Nil) {
-		cache.logger.Debug(
-			"Post replies count not found in cache",
-			"post_id", postID,
-		)
+	result := make(map[uuid.UUID]int64, len(postIDs))
+	pipe := cache.client.Pipeline()
 
-		return 0, nil
+	cmds := make(map[uuid.UUID]*redis.StringCmd, len(postIDs))
+
+	for _, postID := range postIDs {
+		key := "post:replies:count:" + postID.String()
+		cmds[postID] = pipe.Get(ctx, key)
 	}
 
-	if err != nil {
+	if _, err := pipe.Exec(ctx); err != nil {
 		cache.logger.Error(
-			"Failed to get post replies count from cache",
+			"Failed to get post replies counts from cache",
 			"error", err,
-			"post_id", postID,
+			"posts_count", len(postIDs),
 		)
 
-		return 0, fmt.Errorf("get post replies count: %w", err)
+		return nil, fmt.Errorf("get post replies counts: %w", err)
 	}
 
-	count, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		cache.logger.Error(
-			"Failed to parse post replies count",
-			"error", err,
-			"post_id", postID,
-			"value", value,
-		)
+	for postID, cmd := range cmds {
+		value, err := cmd.Result()
 
-		return 0, fmt.Errorf("parse post replies count: %w", err)
+		if errors.Is(err, redis.Nil) {
+			result[postID] = 0
+			continue
+		}
+
+		if err != nil {
+			cache.logger.Error(
+				"Failed to get post replies count",
+				"error", err,
+				"post_id", postID,
+			)
+
+			return nil, fmt.Errorf(
+				"get post replies count for %s: %w",
+				postID,
+				err,
+			)
+		}
+
+		count, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			cache.logger.Error(
+				"Failed to parse post replies count",
+				"error", err,
+				"post_id", postID,
+				"value", value,
+			)
+
+			return nil, fmt.Errorf(
+				"parse post replies count for %s: %w",
+				postID,
+				err,
+			)
+		}
+
+		result[postID] = count
 	}
 
 	cache.logger.Debug(
-		"Post replies count retrieved from cache",
-		"post_id", postID,
-		"reply_count", count,
+		"Post replies counts retrieved from cache",
+		"posts_count", len(result),
 	)
 
-	return count, nil
+	return result, nil
 }

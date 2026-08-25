@@ -10,6 +10,7 @@ import (
 	"post-service/internal/adapters/redis"
 	"post-service/internal/config"
 	"post-service/internal/security/jwt"
+	"post-service/internal/usecase"
 
 	"syscall"
 )
@@ -46,15 +47,18 @@ func Run(ctx context.Context, config *config.Config, logger *slog.Logger) error 
 	defer postCache.Close()
 	logger.Debug("Repo and Cache initialized")
 
-	fetcher := jwt.NewJWKSFetcher(logger)
+	logger.Debug("Creating Usecase...")
+	uc := usecase.NewUsecase(postRepo, postCache, logger)
+	logger.Debug("Usecase initialized")
+
 	logger.Debug("Fetching JWK...")
+	fetcher := jwt.NewJWKSFetcher(logger)
 	publicKey, kid, err := fetcher.Fetch(ctx, config.JwksURL)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
-	logger.Debug("JWK was fetched successfully")
-
 	verifier := jwt.NewVerifier(publicKey, kid, logger)
+	logger.Debug("JWK was fetched,verifier was created successfully")
 
 	logger.Info("Server Started")
 	sig := make(chan os.Signal, 1)
