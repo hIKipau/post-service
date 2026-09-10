@@ -69,7 +69,7 @@ func (uc *Usecase) UpdatePost(ctx context.Context, post domain.Post) error {
 }
 
 // DeletePost deletes a post owned by the specified author.
-func (uc *Usecase) DeletePost(ctx context.Context, postID uuid.UUID, authorID uuid.UUID, ) error {
+func (uc *Usecase) DeletePost(ctx context.Context, postID uuid.UUID, authorID uuid.UUID) error {
 	uc.logger.Debug(
 		"Deleting post",
 		"post_id", postID,

@@ -47,10 +47,12 @@ type Cache interface {
 	AddLike(ctx context.Context, userID, postID uuid.UUID) error
 	RemoveLike(ctx context.Context, userID, postID uuid.UUID) error
 	GetPostsLikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error)
+	IsLiked(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 
 	AddDislike(ctx context.Context, userID, postID uuid.UUID) error
 	RemoveDislike(ctx context.Context, userID, postID uuid.UUID) error
 	GetPostsDislikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error)
+	IsDisliked(ctx context.Context, userID, postID uuid.UUID) (bool, error)
 
 	SetPostRepliesCount(ctx context.Context, postID uuid.UUID, replyCount int64, ttl time.Duration) error
 	GetPostsRepliesCount(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error)

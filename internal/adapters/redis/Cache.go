@@ -429,6 +429,86 @@ func (cache *Cache) RemoveDislike(ctx context.Context, userID uuid.UUID, postID 
 	return nil
 }
 
+// IsLiked checks whether the user has liked the specified post.
+func (cache *Cache) IsLiked(
+	ctx context.Context,
+	userID uuid.UUID,
+	postID uuid.UUID,
+) (bool, error) {
+	key := "post:likes:" + postID.String()
+
+	cache.logger.Debug(
+		"Checking if user liked post",
+		"user_id", userID,
+		"post_id", postID,
+	)
+
+	liked, err := cache.client.SIsMember(
+		ctx,
+		key,
+		userID.String(),
+	).Result()
+	if err != nil {
+		cache.logger.Error(
+			"Failed to check post like",
+			"error", err,
+			"user_id", userID,
+			"post_id", postID,
+		)
+
+		return false, fmt.Errorf("check post like: %w", err)
+	}
+
+	cache.logger.Debug(
+		"Post like status retrieved",
+		"user_id", userID,
+		"post_id", postID,
+		"liked", liked,
+	)
+
+	return liked, nil
+}
+
+// IsDisliked checks whether the user has disliked the specified post.
+func (cache *Cache) IsDisliked(
+	ctx context.Context,
+	userID uuid.UUID,
+	postID uuid.UUID,
+) (bool, error) {
+	key := "post:dislikes:" + postID.String()
+
+	cache.logger.Debug(
+		"Checking if user disliked post",
+		"user_id", userID,
+		"post_id", postID,
+	)
+
+	disliked, err := cache.client.SIsMember(
+		ctx,
+		key,
+		userID.String(),
+	).Result()
+	if err != nil {
+		cache.logger.Error(
+			"Failed to check post dislike",
+			"error", err,
+			"user_id", userID,
+			"post_id", postID,
+		)
+
+		return false, fmt.Errorf("check post dislike: %w", err)
+	}
+
+	cache.logger.Debug(
+		"Post dislike status retrieved",
+		"user_id", userID,
+		"post_id", postID,
+		"disliked", disliked,
+	)
+
+	return disliked, nil
+}
+
 // GetPostsLikes returns the like count for each specified post.
 func (cache *Cache) GetPostsLikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
 	cache.logger.Debug(
@@ -554,6 +634,10 @@ func (cache *Cache) GetPostsRepliesCount(
 		"Getting post replies counts from cache",
 		"posts_count", len(postIDs),
 	)
+
+	if len(postIDs) == 0 {
+		return make(map[uuid.UUID]int64), fmt.Errorf("can't get post replies counts: postIDs is empty")
+	}
 
 	result := make(map[uuid.UUID]int64, len(postIDs))
 	pipe := cache.client.Pipeline()

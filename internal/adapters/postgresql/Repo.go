@@ -62,7 +62,7 @@ func (repo *Repo) CreatePost(
 			updated_at,
 			deleted_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11)
 	`
 
 	result, err := tx.Exec(
@@ -654,7 +654,7 @@ func (repo *Repo) GetPostsByIDs(
 
 func (repo *Repo) GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit int64) ([]domain.FeedCandidate, error) {
 
-	if limit >= 0 {
+	if limit <= 0 {
 		return []domain.FeedCandidate{}, fmt.Errorf("cant getting feed candidates, limit is negative: %d", limit)
 	}
 
@@ -664,7 +664,7 @@ func (repo *Repo) GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit
     	author_id,
     	created_at,
     	likes_count,
-    	likes_count,
+    	dislikes_count,
     	replies_count
 	FROM posts
 	WHERE author_id <> $1
