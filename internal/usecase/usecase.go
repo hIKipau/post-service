@@ -44,6 +44,7 @@ type Cache interface {
 	GetSeen(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]struct{}, error)
 	AddSeen(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID, ttl time.Duration) error
 
+	// AddLike and AddDislike atomically replace the opposite reaction.
 	AddLike(ctx context.Context, userID, postID uuid.UUID) error
 	RemoveLike(ctx context.Context, userID, postID uuid.UUID) error
 	GetPostsLikes(ctx context.Context, postIDs []uuid.UUID) (map[uuid.UUID]int64, error)

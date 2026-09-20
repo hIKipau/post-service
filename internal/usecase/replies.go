@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"post-service/internal/domain"
 
 	"github.com/google/uuid"
@@ -25,21 +26,20 @@ func (uc *Usecase) GetRepliesPosts(ctx context.Context, parentID uuid.UUID, page
 		postIDs[i] = post.ID
 	}
 
-	dislikes, _ := uc.cache.GetPostsDislikes(ctx, postIDs)
-	likes, _ := uc.cache.GetPostsLikes(ctx, postIDs)
-	replies, _ := uc.cache.GetPostsRepliesCount(ctx, postIDs)
+	dislikes, err := uc.cache.GetPostsDislikes(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get replies dislikes: %w", err)
+	}
+	likes, err := uc.cache.GetPostsLikes(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get replies likes: %w", err)
+	}
 
 	for i := range posts {
 		id := posts[i].ID
-		if dislikes != nil {
-			posts[i].DislikeCount = dislikes[id]
-		}
-		if likes != nil {
-			posts[i].LikeCount = likes[id]
-		}
-		if replies != nil {
-			posts[i].ReplyCount = replies[id]
-		}
+		posts[i].DislikeCount = dislikes[id]
+		posts[i].LikeCount = likes[id]
+		// ReplyCount is maintained transactionally by PostgreSQL.
 	}
 
 	return posts, nil

@@ -15,49 +15,7 @@ func (uc *Usecase) LikePost(ctx context.Context, postID uuid.UUID, userID uuid.U
 		"user_id", userID,
 	)
 
-	isLiked, err := uc.cache.IsLiked(ctx, userID, postID)
-	if err != nil {
-		uc.logger.Error(
-			"Failed to check post like",
-			"error", err,
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return fmt.Errorf("check post like: %w", err)
-	}
-
-	isDisliked, err := uc.cache.IsDisliked(ctx, userID, postID)
-	if err != nil {
-		uc.logger.Error(
-			"Failed to check post dislike",
-			"error", err,
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return fmt.Errorf("check post dislike: %w", err)
-	}
-
-	if isLiked && !isDisliked {
-		uc.logger.Debug(
-			"Post is already liked",
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return nil
-	}
-
-	if isDisliked {
-		if err := uc.cache.RemoveDislike(ctx, userID, postID); err != nil {
-			uc.logger.Error(
-				"Failed to remove post dislike",
-				"error", err,
-				"post_id", postID,
-				"user_id", userID,
-			)
-			return fmt.Errorf("remove post dislike: %w", err)
-		}
-	}
-
+	// The cache replaces the opposite reaction atomically.
 	if err := uc.cache.AddLike(ctx, userID, postID); err != nil {
 		uc.logger.Error(
 			"Failed to add post like",
@@ -85,49 +43,7 @@ func (uc *Usecase) DislikePost(ctx context.Context, postID uuid.UUID, userID uui
 		"user_id", userID,
 	)
 
-	isLiked, err := uc.cache.IsLiked(ctx, userID, postID)
-	if err != nil {
-		uc.logger.Error(
-			"Failed to check post like",
-			"error", err,
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return fmt.Errorf("check post like: %w", err)
-	}
-
-	isDisliked, err := uc.cache.IsDisliked(ctx, userID, postID)
-	if err != nil {
-		uc.logger.Error(
-			"Failed to check post dislike",
-			"error", err,
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return fmt.Errorf("check post dislike: %w", err)
-	}
-
-	if !isLiked && isDisliked {
-		uc.logger.Debug(
-			"Post is already disliked",
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return nil
-	}
-
-	if isLiked {
-		if err := uc.cache.RemoveLike(ctx, userID, postID); err != nil {
-			uc.logger.Error(
-				"Failed to remove post like",
-				"error", err,
-				"post_id", postID,
-				"user_id", userID,
-			)
-			return fmt.Errorf("remove post like: %w", err)
-		}
-	}
-
+	// The cache replaces the opposite reaction atomically.
 	if err := uc.cache.AddDislike(ctx, userID, postID); err != nil {
 		uc.logger.Error(
 			"Failed to add post dislike",
@@ -155,26 +71,6 @@ func (uc *Usecase) UnLikePost(ctx context.Context, postID uuid.UUID, userID uuid
 		"user_id", userID,
 	)
 
-	isLiked, err := uc.cache.IsLiked(ctx, userID, postID)
-	if err != nil {
-		uc.logger.Error(
-			"Failed to check post like",
-			"error", err,
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return fmt.Errorf("check post like: %w", err)
-	}
-
-	if !isLiked {
-		uc.logger.Debug(
-			"Post is not liked",
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return nil
-	}
-
 	if err := uc.cache.RemoveLike(ctx, userID, postID); err != nil {
 		uc.logger.Error(
 			"Failed to remove post like",
@@ -201,26 +97,6 @@ func (uc *Usecase) UnDislikePost(ctx context.Context, postID uuid.UUID, userID u
 		"post_id", postID,
 		"user_id", userID,
 	)
-
-	isDisliked, err := uc.cache.IsDisliked(ctx, userID, postID)
-	if err != nil {
-		uc.logger.Error(
-			"Failed to check post dislike",
-			"error", err,
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return fmt.Errorf("check post dislike: %w", err)
-	}
-
-	if !isDisliked {
-		uc.logger.Debug(
-			"Post is not disliked",
-			"post_id", postID,
-			"user_id", userID,
-		)
-		return nil
-	}
 
 	if err := uc.cache.RemoveDislike(ctx, userID, postID); err != nil {
 		uc.logger.Error(

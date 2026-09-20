@@ -74,16 +74,6 @@ func (uc *Usecase) GetFeed(ctx context.Context, userID uuid.UUID) ([]domain.Post
 			return []domain.Post{}, err
 		}
 
-		feedRepliesCounts, err := uc.cache.GetPostsRepliesCount(ctx, feedPostsIDs)
-		if err != nil {
-			uc.logger.Error(
-				"Failed to get feed post reply counts",
-				"error", err,
-				"user_id", userID,
-			)
-			return []domain.Post{}, err
-		}
-
 		err = uc.cache.AddSeen(
 			ctx,
 			userID,
@@ -113,7 +103,6 @@ func (uc *Usecase) GetFeed(ctx context.Context, userID uuid.UUID) ([]domain.Post
 		for i := range feed {
 			feed[i].LikeCount = feedLikesCounts[feed[i].ID]
 			feed[i].DislikeCount = feedDislikesCounts[feed[i].ID]
-			feed[i].ReplyCount = feedRepliesCounts[feed[i].ID]
 		}
 
 		uc.logger.Info(
@@ -186,6 +175,10 @@ func (uc *Usecase) GetFeed(ctx context.Context, userID uuid.UUID) ([]domain.Post
 		realCandidates[i] = candidate.PostID
 	}
 
+	if len(realCandidates) == 0 {
+		return []domain.Post{}, nil
+	}
+
 	feedActualLikesCounts, err := uc.cache.GetPostsLikes(ctx, realCandidates)
 	if err != nil {
 		uc.logger.Error(
@@ -200,16 +193,6 @@ func (uc *Usecase) GetFeed(ctx context.Context, userID uuid.UUID) ([]domain.Post
 	if err != nil {
 		uc.logger.Error(
 			"Failed to get actual feed dislike counts",
-			"error", err,
-			"user_id", userID,
-		)
-		return []domain.Post{}, err
-	}
-
-	feedActualRepliesCounts, err := uc.cache.GetPostsRepliesCount(ctx, realCandidates)
-	if err != nil {
-		uc.logger.Error(
-			"Failed to get actual feed reply counts",
 			"error", err,
 			"user_id", userID,
 		)
@@ -273,7 +256,6 @@ func (uc *Usecase) GetFeed(ctx context.Context, userID uuid.UUID) ([]domain.Post
 	for i := range feed {
 		feed[i].LikeCount = feedActualLikesCounts[feed[i].ID]
 		feed[i].DislikeCount = feedActualDislikesCounts[feed[i].ID]
-		feed[i].ReplyCount = feedActualRepliesCounts[feed[i].ID]
 	}
 
 	uc.logger.Info(

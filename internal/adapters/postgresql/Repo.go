@@ -659,17 +659,18 @@ func (repo *Repo) GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit
 	}
 
 	const query = `
-		SELECT
-    	id,
-    	author_id,
-    	created_at,
-    	likes_count,
-    	dislikes_count,
-    	replies_count
-	FROM posts
-	WHERE author_id <> $1
-	ORDER BY created_at DESC, id DESC
-	LIMIT $2;
+SELECT
+    id,
+    author_id,
+    created_at,
+    like_count,
+    dislike_count,
+    reply_count
+FROM posts
+WHERE author_id <> $1
+  AND deleted_at IS NULL
+ORDER BY created_at DESC, id DESC
+LIMIT $2
 	`
 
 	rows, err := repo.pool.Query(ctx, query, userID, limit)

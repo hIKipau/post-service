@@ -39,6 +39,9 @@ func (cache *Cache) SetFeed(ctx context.Context, userID uuid.UUID, postIDs []uui
 		)
 		return fmt.Errorf("delete old user feed: %w", err)
 	}
+	if len(postIDs) == 0 {
+		return nil
+	}
 
 	values := make([]any, len(postIDs))
 	for i, postID := range postIDs {
@@ -315,7 +318,21 @@ func (cache *Cache) AddSeen(ctx context.Context, userID uuid.UUID, postIDs []uui
 	return nil
 }
 
-// AddLike adds the user's UUID to the post's likes set.
+// Both keys must be sets (or absent). Check before writing because Lua errors
+// do not roll back earlier writes. Redis executes the script without interleaving.
+var switchReaction = redis.NewScript(`
+for i = 1, 2 do
+    local kind = redis.call("TYPE", KEYS[i]).ok
+    if kind ~= "none" and kind ~= "set" then
+        return redis.error_reply("WRONGTYPE reaction key must be a set")
+    end
+end
+redis.call("SADD", KEYS[1], ARGV[1])
+redis.call("SREM", KEYS[2], ARGV[1])
+return 1
+`)
+
+// AddLike atomically adds a like and removes the user's dislike.
 func (cache *Cache) AddLike(ctx context.Context, userID uuid.UUID, postID uuid.UUID) error {
 	key := "post:likes:" + postID.String()
 
@@ -325,7 +342,8 @@ func (cache *Cache) AddLike(ctx context.Context, userID uuid.UUID, postID uuid.U
 		"post_id", postID,
 	)
 
-	if err := cache.client.SAdd(ctx, key, userID.String()).Err(); err != nil {
+	if err := switchReaction.Run(ctx, cache.client,
+		[]string{key, "post:dislikes:" + postID.String()}, userID.String()).Err(); err != nil {
 		cache.logger.Error(
 			"Failed to add like to post",
 			"error", err,
@@ -369,7 +387,7 @@ func (cache *Cache) RemoveLike(ctx context.Context, userID uuid.UUID, postID uui
 	return nil
 }
 
-// AddDislike adds the user's UUID to the post's dislikes set.
+// AddDislike atomically adds a dislike and removes the user's like.
 func (cache *Cache) AddDislike(ctx context.Context, userID uuid.UUID, postID uuid.UUID) error {
 	key := "post:dislikes:" + postID.String()
 
@@ -379,7 +397,8 @@ func (cache *Cache) AddDislike(ctx context.Context, userID uuid.UUID, postID uui
 		"post_id", postID,
 	)
 
-	if err := cache.client.SAdd(ctx, key, userID.String()).Err(); err != nil {
+	if err := switchReaction.Run(ctx, cache.client,
+		[]string{key, "post:likes:" + postID.String()}, userID.String()).Err(); err != nil {
 		cache.logger.Error(
 			"Failed to add dislike to post",
 			"error", err,
@@ -625,7 +644,8 @@ func (cache *Cache) SetPostRepliesCount(
 	return nil
 }
 
-// GetPostsRepliesCount returns the cached reply count for each specified post.
+// GetPostsRepliesCount returns cached reply counts. Missing keys are omitted,
+// so callers can distinguish a cache miss from a cached zero.
 func (cache *Cache) GetPostsRepliesCount(
 	ctx context.Context,
 	postIDs []uuid.UUID,
@@ -636,7 +656,7 @@ func (cache *Cache) GetPostsRepliesCount(
 	)
 
 	if len(postIDs) == 0 {
-		return make(map[uuid.UUID]int64), fmt.Errorf("can't get post replies counts: postIDs is empty")
+		return map[uuid.UUID]int64{}, nil
 	}
 
 	result := make(map[uuid.UUID]int64, len(postIDs))
@@ -649,13 +669,8 @@ func (cache *Cache) GetPostsRepliesCount(
 		cmds[postID] = pipe.Get(ctx, key)
 	}
 
-	if _, err := pipe.Exec(ctx); err != nil {
-		cache.logger.Error(
-			"Failed to get post replies counts from cache",
-			"error", err,
-			"posts_count", len(postIDs),
-		)
-
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("get post replies counts: %w", err)
 	}
 
@@ -663,7 +678,6 @@ func (cache *Cache) GetPostsRepliesCount(
 		value, err := cmd.Result()
 
 		if errors.Is(err, redis.Nil) {
-			result[postID] = 0
 			continue
 		}
 
