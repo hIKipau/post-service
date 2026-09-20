@@ -12,6 +12,19 @@ import (
 //- UpdatePost
 //- DeletePost
 
+// GetPost loads an active post, including metadata needed to create a reply.
+// Reaction counters here are database snapshots; feed/replies enrich them from Redis.
+func (uc *Usecase) GetPost(ctx context.Context, postID uuid.UUID) (domain.Post, error) {
+	posts, err := uc.repo.GetPostsByIDs(ctx, []uuid.UUID{postID})
+	if err != nil {
+		return domain.Post{}, fmt.Errorf("get post: %w", err)
+	}
+	if len(posts) == 0 || posts[0].DeletedAt != nil {
+		return domain.Post{}, domain.ErrPostNotFound
+	}
+	return posts[0], nil
+}
+
 // CreatePost creates a new post.
 func (uc *Usecase) CreatePost(ctx context.Context, post domain.Post) error {
 	uc.logger.Debug(

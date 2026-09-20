@@ -153,8 +153,9 @@ func (repo *Repo) CreatePost(
 			)
 
 			return fmt.Errorf(
-				"increment reply count of parent post %s: parent post does not exist or is deleted",
+				"increment reply count of parent post %s: %w",
 				*post.ParentID,
+				domain.ErrPostNotFound,
 			)
 		}
 
@@ -243,8 +244,9 @@ func (repo *Repo) DeletePost(ctx context.Context, postID uuid.UUID, authorID uui
 			)
 
 			return fmt.Errorf(
-				"delete post %s: post does not exist, is already deleted, or belongs to another author",
+				"delete post %s: %w",
 				postID,
+				domain.ErrPostNotFound,
 			)
 		}
 
@@ -387,8 +389,9 @@ func (repo *Repo) UpdatePost(ctx context.Context, post domain.Post) error {
 		)
 
 		return fmt.Errorf(
-			"update post %s: post does not exist, is deleted, or belongs to another author",
+			"update post %s: %w",
 			post.ID,
+			domain.ErrPostNotFound,
 		)
 	}
 

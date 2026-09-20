@@ -112,6 +112,22 @@ func TestEmptyFeedAfterFiltering(t *testing.T) {
 	}
 }
 
+func TestGetPostRejectsMissingOrDeleted(t *testing.T) {
+	id := uuid.New()
+	now := time.Now()
+	for _, posts := range [][]domain.Post{nil, {{ID: id, DeletedAt: &now}}} {
+		uc := newReadUsecase(&readRepo{posts: posts}, &readCache{})
+		if _, err := uc.GetPost(context.Background(), id); !errors.Is(err, domain.ErrPostNotFound) {
+			t.Fatalf("expected not found, got %v", err)
+		}
+	}
+	uc := newReadUsecase(&readRepo{posts: []domain.Post{{ID: id}}}, &readCache{})
+	post, err := uc.GetPost(context.Background(), id)
+	if err != nil || post.ID != id {
+		t.Fatalf("post=%+v err=%v", post, err)
+	}
+}
+
 func TestRepliesPropagateReactionErrors(t *testing.T) {
 	failure := errors.New("redis unavailable")
 	for _, cache := range []*readCache{{likeErr: failure}, {dislikeErr: failure}} {
