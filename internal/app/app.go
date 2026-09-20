@@ -9,40 +9,51 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
+	"time"
+
 	"post-service/internal/adapters/postgresql"
 	"post-service/internal/adapters/redis"
 	"post-service/internal/config"
 	"post-service/internal/security/jwt"
 	httptransport "post-service/internal/transport/http"
 	"post-service/internal/usecase"
-	"time"
-
-	"syscall"
 )
 
-func Run(ctx context.Context, config *config.Config, logger *slog.Logger) error {
-	const op string = "internal/app/Run"
-	logger.Info(fmt.Sprintf("Starting %s", op))
+// Run initializes storage and authentication, connects the HTTP components and serves until shutdown.
+func Run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+	if cfg == nil {
+		return errors.New("application configuration is required")
+	}
+	if cfg.StartupTimeout <= 0 || cfg.ShutdownTimeout <= 0 {
+		return errors.New("startup and shutdown timeouts must be positive")
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Info("Starting post service")
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	startupCtx, cancelStartup := context.WithTimeout(ctx, cfg.StartupTimeout)
+	defer cancelStartup()
 
 	logger.Debug("Initialize database...")
-	pgsql, err := postgresql.New(ctx, config.DatabaseURL, logger)
+	pgsql, err := postgresql.New(startupCtx, cfg.DatabaseURL, logger)
 	if err != nil {
-		return fmt.Errorf("%s: %w", op, err)
+		return fmt.Errorf("initialize PostgreSQL: %w", err)
 	}
 	defer pgsql.Close()
 	logger.Debug("Database initialized")
 
 	logger.Debug("Initialize cache storage...")
-	rdb, err := redis.New(ctx, config.RedisURL, logger)
+	rdb, err := redis.New(startupCtx, cfg.RedisURL, logger)
 	if err != nil {
-		return fmt.Errorf("%s: %w", op, err)
+		return fmt.Errorf("initialize Redis: %w", err)
 	}
 	defer func() {
 		err := rdb.Close()
 		if err != nil {
-			logger.Warn("Failed to close Redis connection, idk why")
+			logger.Warn("Failed to close Redis connection", "error", err)
 		}
 	}()
 	logger.Debug("Cache initialized")
@@ -58,52 +69,74 @@ func Run(ctx context.Context, config *config.Config, logger *slog.Logger) error 
 
 	logger.Debug("Fetching JWK...")
 	fetcher := jwt.NewJWKSFetcher(logger)
-	fetchCtx, cancelFetch := context.WithTimeout(ctx, 10*time.Second)
-	publicKey, kid, err := fetcher.Fetch(fetchCtx, config.JwksURL)
-	cancelFetch()
+	publicKey, kid, err := fetcher.Fetch(startupCtx, cfg.JwksURL)
 	if err != nil {
-		return fmt.Errorf("%s: %w", op, err)
+		return fmt.Errorf("initialize JWT verifier: %w", err)
 	}
+	cancelStartup()
 	verifier := jwt.NewVerifier(publicKey, kid, logger)
-	logger.Debug("JWK was fetched,verifier was created successfully")
+	logger.Debug("JWT verifier initialized")
 
 	server := &http.Server{
-		Addr:              config.HTTPAddress,
+		Addr:              cfg.HTTPAddress,
 		Handler:           httptransport.NewRouter(uc, verifier, logger),
-		ReadTimeout:       config.ReadTimeout,
-		WriteTimeout:      config.WriteTimeout,
-		IdleTimeout:       config.IdleTimeout,
-		ReadHeaderTimeout: config.ReadHeaderTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
-	return serveHTTP(ctx, server, logger)
+	return serveHTTP(ctx, server, logger, cfg.ShutdownTimeout)
 }
 
-func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
-	listener, err := net.Listen("tcp", server.Addr)
+// serveHTTP binds the configured address and manages the HTTP server's lifetime.
+func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger, shutdownTimeout time.Duration) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
 	}
+	return serveListener(ctx, server, listener, logger, shutdownTimeout)
+}
+
+// serveListener drains active requests on cancellation and closes connections if the drain times out.
+func serveListener(ctx context.Context, server *http.Server, listener net.Listener, logger *slog.Logger, shutdownTimeout time.Duration) error {
+	defer listener.Close()
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	logger.Info("HTTP server started", "address", listener.Addr().String())
+	var serveErr error
 	select {
 	case err := <-done:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(err, http.ErrServerClosed) {
+			serveErr = fmt.Errorf("serve HTTP: %w", err)
 		}
-		return fmt.Errorf("serve HTTP: %w", err)
+		// Serve can fail while handlers are still using storage. Drain them
+		// before Run releases the database and Redis connections.
+		done = nil
 	case <-ctx.Done():
-		logger.Info("Shutting down HTTP server")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			_ = server.Close()
-			<-done
-			return fmt.Errorf("shutdown HTTP: %w", err)
-		}
-		if err := <-done; !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
 	}
+
+	logger.Info("Shutting down HTTP server", "timeout", shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	shutdownErr := server.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		logger.Warn("Graceful HTTP shutdown failed; closing connections", "error", shutdownErr)
+		closeErr := server.Close()
+		shutdownErr = fmt.Errorf("shutdown HTTP: %w", errors.Join(shutdownErr, closeErr))
+	}
+	if done != nil {
+		if err := <-done; !errors.Is(err, http.ErrServerClosed) {
+			serveErr = fmt.Errorf("serve HTTP: %w", err)
+		}
+	}
+	if err := errors.Join(serveErr, shutdownErr); err != nil {
+		return err
+	}
+	logger.Info("HTTP server stopped")
+	return nil
 }
