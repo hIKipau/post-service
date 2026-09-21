@@ -80,16 +80,11 @@ func TestRepliesCacheErrors(t *testing.T) {
 }
 
 func TestEmptyFeedAndCounts(t *testing.T) {
-	cache, server := testCache(t)
+	cache, _ := testCache(t)
 	ctx, user := context.Background(), uuid.New()
-	if err := cache.SetFeed(ctx, user, []uuid.UUID{uuid.New()}, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	if err := cache.SetFeed(ctx, user, nil, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	if server.Exists("feed:" + user.String()) {
-		t.Fatal("old feed still exists")
+	state, err := cache.GetFeedState(ctx, user)
+	if err != nil || len(state.IDs) != 0 || len(state.Seen) != 0 || state.Cursor != nil {
+		t.Fatalf("empty feed=%+v err=%v", state, err)
 	}
 	counts, err := cache.GetPostsRepliesCount(ctx, nil)
 	if err != nil || counts == nil || len(counts) != 0 {

@@ -655,13 +655,14 @@ func (repo *Repo) GetPostsByIDs(
 	return result, nil
 }
 
-func (repo *Repo) GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit int64) ([]domain.FeedCandidate, error) {
+// GetFeedCandidates loads a newest-first batch, optionally continuing strictly after a composite cursor.
+func (repo *Repo) GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit int64, before *domain.FeedCursor) ([]domain.FeedCandidate, error) {
 
 	if limit <= 0 {
 		return []domain.FeedCandidate{}, fmt.Errorf("cant getting feed candidates, limit is negative: %d", limit)
 	}
 
-	const query = `
+	query := `
 SELECT
     id,
     author_id,
@@ -672,11 +673,15 @@ SELECT
 FROM posts
 WHERE author_id <> $1
   AND deleted_at IS NULL
-ORDER BY created_at DESC, id DESC
-LIMIT $2
 	`
+	args := []any{userID, limit}
+	if before != nil {
+		query += " AND (created_at, id) < ($3, $4)"
+		args = append(args, before.CreatedAt, before.PostID)
+	}
+	query += " ORDER BY created_at DESC, id DESC LIMIT $2"
 
-	rows, err := repo.pool.Query(ctx, query, userID, limit)
+	rows, err := repo.pool.Query(ctx, query, args...)
 	if err != nil {
 		return []domain.FeedCandidate{}, fmt.Errorf("cant exec query: %w", err)
 	}

@@ -23,27 +23,31 @@ type readRepo struct {
 func (r *readRepo) GetChildrenPosts(context.Context, uuid.UUID, int64, int64) ([]domain.Post, error) {
 	return append([]domain.Post(nil), r.posts...), nil
 }
-func (r *readRepo) GetPostsByIDs(context.Context, []uuid.UUID) ([]domain.Post, error) {
-	return append([]domain.Post(nil), r.posts...), nil
+func (r *readRepo) GetPostsByIDs(_ context.Context, ids []uuid.UUID) ([]domain.Post, error) {
+	result := make([]domain.Post, 0, len(ids))
+	for _, id := range ids {
+		for _, post := range r.posts {
+			if post.ID == id {
+				result = append(result, post)
+				break
+			}
+		}
+	}
+	return result, nil
 }
-func (r *readRepo) GetFeedCandidates(context.Context, uuid.UUID, int64) ([]domain.FeedCandidate, error) {
+func (r *readRepo) GetFeedCandidates(context.Context, uuid.UUID, int64, *domain.FeedCursor) ([]domain.FeedCandidate, error) {
 	return r.candidates, nil
 }
 
 type readCache struct {
 	Cache
-	length              int64
 	ids                 []uuid.UUID
 	seen                map[uuid.UUID]struct{}
 	likeErr, dislikeErr error
 }
 
-func (c *readCache) GetFeedLength(context.Context, uuid.UUID) (int64, error) { return c.length, nil }
-func (c *readCache) GetFeed(context.Context, uuid.UUID, int64) ([]uuid.UUID, error) {
-	return c.ids, nil
-}
-func (c *readCache) GetSeen(context.Context, uuid.UUID) (map[uuid.UUID]struct{}, error) {
-	return c.seen, nil
+func (c *readCache) GetFeedState(context.Context, uuid.UUID) (domain.FeedState, error) {
+	return domain.FeedState{IDs: append([]uuid.UUID(nil), c.ids...), Seen: c.seen}, nil
 }
 func (c *readCache) GetPostsLikes(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]int64, error) {
 	result := make(map[uuid.UUID]int64)
@@ -59,9 +63,16 @@ func (c *readCache) GetPostsDislikes(_ context.Context, ids []uuid.UUID) (map[uu
 	}
 	return result, c.dislikeErr
 }
-func (c *readCache) AddSeen(context.Context, uuid.UUID, []uuid.UUID, time.Duration) error { return nil }
-func (c *readCache) DeleteFeed(context.Context, uuid.UUID) error                          { return nil }
-func (c *readCache) SetFeed(context.Context, uuid.UUID, []uuid.UUID, time.Duration) error { return nil }
+func (c *readCache) CommitFeed(_ context.Context, _ uuid.UUID, state domain.FeedState, shown []uuid.UUID, _, _ time.Duration) (bool, error) {
+	c.ids = append([]uuid.UUID(nil), state.IDs...)
+	if c.seen == nil {
+		c.seen = make(map[uuid.UUID]struct{})
+	}
+	for _, id := range shown {
+		c.seen[id] = struct{}{}
+	}
+	return true, nil
+}
 
 func newReadUsecase(repo Repository, cache Cache) *Usecase {
 	return &Usecase{repo: repo, cache: cache, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -75,9 +86,9 @@ func TestReadsRetainDatabaseReplyCount(t *testing.T) {
 				posts:      []domain.Post{{ID: id, ReplyCount: 9}},
 				candidates: []domain.FeedCandidate{{PostID: id}},
 			}
-			cache := &readCache{ids: []uuid.UUID{id}}
+			cache := &readCache{}
 			if mode == "cached feed" {
-				cache.length = 20
+				cache.ids = []uuid.UUID{id}
 			}
 			uc := newReadUsecase(repo, cache)
 			var posts []domain.Post

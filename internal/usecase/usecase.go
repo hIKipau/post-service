@@ -32,17 +32,12 @@ type Repository interface {
 
 	GetPostsByIDs(ctx context.Context, postIDs []uuid.UUID) ([]domain.Post, error)
 	GetChildrenPosts(ctx context.Context, parentID uuid.UUID, pageSize, page int64) ([]domain.Post, error)
-	GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit int64) ([]domain.FeedCandidate, error)
+	GetFeedCandidates(ctx context.Context, userID uuid.UUID, limit int64, before *domain.FeedCursor) ([]domain.FeedCandidate, error)
 }
 
 type Cache interface {
-	SetFeed(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID, ttl time.Duration) error
-	GetFeed(ctx context.Context, userID uuid.UUID, limit int64) ([]uuid.UUID, error)
-	DeleteFeed(ctx context.Context, userID uuid.UUID) error
-	GetFeedLength(ctx context.Context, userID uuid.UUID) (int64, error)
-
-	GetSeen(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]struct{}, error)
-	AddSeen(ctx context.Context, userID uuid.UUID, postIDs []uuid.UUID, ttl time.Duration) error
+	GetFeedState(ctx context.Context, userID uuid.UUID) (domain.FeedState, error)
+	CommitFeed(ctx context.Context, userID uuid.UUID, state domain.FeedState, shown []uuid.UUID, feedTTL, seenTTL time.Duration) (bool, error)
 
 	// AddLike and AddDislike atomically replace the opposite reaction.
 	AddLike(ctx context.Context, userID, postID uuid.UUID) error

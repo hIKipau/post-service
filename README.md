@@ -12,24 +12,25 @@ A Go HTTP API backed by PostgreSQL and Redis, with JWT authentication and explic
 ![Status](https://img.shields.io/badge/status-in_development-E5A00D?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-64748B?style=flat-square)](LICENSE)
 
-[Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [API](#http-api) · [Development](#development)
+[Features](#features) · [Architecture](#architecture) · [Database](docs/database.md) · [Getting started](#getting-started) · [API](#http-api) · [Development](#development)
 
 </div>
 
 ---
 
 > [!NOTE]
-> The first version is under development. The HTTP API is implemented; database migrations, feed ranking and reaction persistence still need work. See [Current boundaries](#current-boundaries).
+> The first version is under development. The HTTP API, database migrations and basic feed ranking are implemented; durable reaction storage and personalized recommendations remain future work. See [Current boundaries](#current-boundaries).
 
 ## Features
 
 - **Posts** — create, edit and soft-delete posts, with owner checks on mutations.
 - **Threaded replies** — reply to posts or other replies while preserving the original thread root.
 - **Reactions** — add or remove likes and dislikes; a Lua script atomically switches between them.
-- **Feed** — Redis-backed feed queues and seen-post tracking, with candidates selected from PostgreSQL.
+- **Feed** — ranked PostgreSQL candidates, Redis queues, seen-post tracking and consistent pages of up to 20 posts.
 - **Authentication** — Bearer JWT verification using an RSA public key fetched from an external JWKS endpoint.
 - **HTTP validation** — UUID checks, bounded JSON bodies, text validation and reply pagination.
 - **Application lifecycle** — startup connection checks, configurable timeouts, structured logs and graceful shutdown.
+- **Database migrations** — versioned PostgreSQL SQL, embedded in a standalone Goose migrator with migration locking.
 
 ## Architecture
 
@@ -59,13 +60,17 @@ flowchart LR
 <summary><strong>Project layout</strong></summary>
 
 ```text
-cmd/api/
-└── main.go                 # Entry point
+cmd/
+├── api/                    # HTTP entry point
+└── migrate/                # Standalone Goose migration command
+migrations/                 # Embedded SQL: posts table, constraints and indexes
+docs/database.md            # Schema, relationships and migration workflow
 internal/
 ├── app/                    # Application wiring and lifecycle
 ├── config/                 # Environment configuration
 ├── domain/                 # Models and errors
 ├── logger/                 # Structured JSON logging
+├── migrator/               # Goose provider and migration operations
 ├── security/jwt/           # JWKS client and token verifier
 ├── adapters/
 │   ├── postgresql/         # Post repository
@@ -98,12 +103,12 @@ internal/
 You will need:
 
 - Go **1.26 or newer**.
-- A reachable PostgreSQL database with a compatible `posts` table.
+- A reachable PostgreSQL database using UTF-8 encoding.
 - A reachable Redis instance.
 - An external authentication service exposing an RSA JWKS endpoint and issuing signed access tokens.
 
-> [!IMPORTANT]
-> SQL migrations and automatic schema creation are not included yet. Provision the database schema before using the API. Expected columns and queries are defined in [Repo.go](internal/adapters/postgresql/Repo.go).
+The database itself must already exist. The included [Goose migrations](docs/database.md)
+create the `posts` table, constraints and indexes before you start the API.
 
 ### 2. Get the code
 
@@ -149,7 +154,25 @@ Durations use Go notation, such as `500ms`, `10s` or `1m`. Startup and shutdown 
 
 </details>
 
-### 4. Run
+### 4. Apply migrations
+
+```sh
+go run ./cmd/migrate status
+go run ./cmd/migrate up
+```
+
+The migrator only requires `DATABASE_URL` and also reads the optional `.env`.
+It uses **Goose v3.28.0** with embedded SQL and runs independently of the API.
+Repeated `up` skips applied migrations. Use `version` to inspect the current version
+or `-timeout 10m up` to change the default five-minute deadline.
+
+> [!WARNING]
+> The initial migration expects a fresh schema. If `posts` already exists, review
+> the [existing-database procedure](docs/database.md#existing-database) first.
+> `go run ./cmd/migrate down` rolls back one migration; rolling back the initial
+> migration permanently removes all posts and replies.
+
+### 5. Run
 
 ```sh
 go run ./cmd/api
@@ -300,23 +323,62 @@ Internal error details stay in server logs. Unmatched routes and unsupported met
 
 ## Development
 
+### Feed behavior
+
+`internal/usecase/feed.go` contains both orchestration and the ranking helpers.
+When fewer than 20 IDs remain, the service keeps that tail and appends ranked
+unseen candidates, excluding IDs already queued. Each refill checks the newest
+100 candidates first, then continues older batches using a saved `(created_at, id)`
+cursor. Scanning is limited to three batches per attempt; progress is saved even
+when a scan finds no new posts. Reaching the end resets the cursor.
+
+```text
+activity = max(0, likes + 0.5 * replies - 2 * dislikes)
+score    = (1 + ln(1 + activity)) / (1 + ageHours / 24)
+```
+
+Likes/dislikes come from Redis, reply counts from PostgreSQL. These are starting
+weights, not personalized recommendations. Equal scores use newest creation time
+and descending UUID as stable tie breakers. Existing queued posts keep their order;
+only newly appended candidates are ranked.
+
+The service reads a queue snapshot, loads up to 20 active foreign posts, then uses
+a Redis Lua script to commit the remaining IDs, scan cursor and only the prepared
+page's seen IDs together. Deleted/missing posts are replaced from the remaining
+queue when possible. A revision token rejects stale concurrent writes; the request
+retries from a fresh snapshot up to three times. PostgreSQL/reaction read failures
+do not consume the queue. A Redis commit error is returned, not a successful page.
+
+`seen` means **prepared for an API response**, not confirmed delivery or reading:
+a lost HTTP response or ambiguous Redis commit can still hide a page from the next
+request. Exact delivery acknowledgement is not implemented. Queue/cursor/revision
+TTL is 24 hours; seen history expires after three days **without new additions**,
+not three days per individual post. The implementation uses a standalone Redis
+client; the multi-key scripts are not configured for Redis Cluster.
+
+### Tests
+
 ```sh
 go test -race ./...
 go vet ./...
 ```
 
 Tests cover HTTP routing, signed JWT authentication, validation, reply creation,
-Redis cache misses, concurrent reaction switching and server shutdown.
+Redis cache misses, concurrent reaction switching and server shutdown. Feed tests
+cover ranking, partial pages, preserved queue tails, older-candidate cursors,
+read failures, atomic commits and concurrent requests without duplicate pages.
 Redis tests use **miniredis**, an in-memory emulator with Lua support. The test suite
 does not require external PostgreSQL, Redis or authentication services, but some
-tests open temporary loopback ports.
+tests open temporary loopback ports. PostgreSQL migration/repository integration
+tests are opt-in with `TEST_DATABASE_URL` and run in a temporary isolated schema;
+see [database testing](docs/database.md#integration-tests).
 
 ## Current boundaries
 
-- **Schema setup is manual.** Database migrations and container-based setup are not included.
+- **Infrastructure is external.** Provision PostgreSQL/Redis yourself and run the included migrations before starting the API; container-based setup is not included.
 - **Redis is required for reactions.** Reaction membership is not persisted or synchronized to PostgreSQL by this service; clearing Redis loses those reactions.
 - **Reply ordering uses PostgreSQL counters.** Displayed like counts come from Redis, so current ordering can differ from the live reaction counts.
-- **Feed behavior is still evolving.** Cached reads consume up to 20 IDs; regeneration can return up to 100 candidates. The API has no feed pagination parameters, and ranking is unfinished. `HEAD /feed` is rejected to avoid consuming entries.
+- **Feed pages are bounded, not guaranteed full.** Responses contain at most 20 posts and may be shorter or empty when the bounded scan finds no eligible candidates or queued posts were deleted. A later request continues the saved scan; an empty page does not necessarily mean the database has no older posts. Ranking is a basic freshness/engagement heuristic, not personalization. `HEAD /feed` is rejected to avoid consuming entries.
 - **JWT keys are loaded at startup.** The current fetcher selects the first JWKS key; automatic key refresh and rotation are not implemented.
 
 ## License
