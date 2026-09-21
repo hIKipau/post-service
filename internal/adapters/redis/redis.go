@@ -20,6 +20,7 @@ func New(ctx context.Context, redisURL string, logger *slog.Logger) (*Redis, err
 	if err != nil {
 		return nil, fmt.Errorf("error parsing Redis URL: %w", err)
 	}
+	opts.ContextTimeoutEnabled = true
 	rdb := redis.NewClient(opts)
 
 	if err = rdb.Ping(ctx).Err(); err != nil {

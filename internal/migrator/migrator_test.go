@@ -65,7 +65,7 @@ func TestEmbeddedMigrations(t *testing.T) {
 		t.Fatal(err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 2 || sources[0].Version != 1 || sources[1].Version != 2 {
+	if len(sources) != 3 || sources[0].Version != 1 || sources[1].Version != 2 || sources[2].Version != 3 {
 		t.Fatalf("unexpected sources: %+v", sources)
 	}
 }

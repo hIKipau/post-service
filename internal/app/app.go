@@ -15,6 +15,7 @@ import (
 	"post-service/internal/adapters/postgresql"
 	"post-service/internal/adapters/redis"
 	"post-service/internal/config"
+	"post-service/internal/reactionsync"
 	"post-service/internal/security/jwt"
 	httptransport "post-service/internal/transport/http"
 	"post-service/internal/usecase"
@@ -61,6 +62,15 @@ func Run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	logger.Debug("Creating Repo and Cache objects...")
 	postRepo := postgresql.NewRepo(pgsql)
 	postCache := redis.NewCache(rdb)
+	if err := postCache.CheckReactionMaintenance(startupCtx); err != nil {
+		return err
+	}
+	if err := postRepo.CheckReactionSchema(startupCtx); err != nil {
+		return err
+	}
+	if err := postCache.EnsureReactionGroup(startupCtx); err != nil {
+		return fmt.Errorf("initialize reaction stream: %w", err)
+	}
 	logger.Debug("Repo and Cache initialized")
 
 	logger.Debug("Creating Usecase...")
@@ -76,6 +86,15 @@ func Run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	cancelStartup()
 	verifier := jwt.NewVerifier(publicKey, kid, logger)
 	logger.Debug("JWT verifier initialized")
+
+	// Keep synchronization alive while HTTP requests drain; stop it before closing either storage.
+	workerCtx, stopWorker := context.WithCancel(context.WithoutCancel(ctx))
+	worker := reactionsync.New(func(ctx context.Context) (reactionsync.Session, error) {
+		return postRepo.AcquireReactionSession(ctx)
+	}, postCache, logger)
+	workerDone := make(chan struct{})
+	go func() { defer close(workerDone); worker.Run(workerCtx) }()
+	defer func() { stopWorker(); <-workerDone }()
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,

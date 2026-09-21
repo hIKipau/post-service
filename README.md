@@ -19,13 +19,13 @@ A Go HTTP API backed by PostgreSQL and Redis, with JWT authentication and explic
 ---
 
 > [!NOTE]
-> The first version is under development. The HTTP API, database migrations and basic feed ranking are implemented; durable reaction storage and personalized recommendations remain future work. See [Current boundaries](#current-boundaries).
+> Under development. Implemented: HTTP API, PostgreSQL migrations, basic feed ranking, and asynchronous reaction persistence. Interest-based personalized recommendations remain future work. See [Current boundaries](#current-boundaries).
 
 ## Features
 
 - **Posts** — create, edit and soft-delete posts, with owner checks on mutations.
 - **Threaded replies** — reply to posts or other replies while preserving the original thread root.
-- **Reactions** — add or remove likes and dislikes; a Lua script atomically switches between them.
+- **Reactions** — Lua-based switching with a Redis event log and an idempotent, ordered PostgreSQL synchronization worker.
 - **Feed** — ranked PostgreSQL candidates, Redis queues, seen-post tracking and consistent pages of up to 20 posts.
 - **Authentication** — Bearer JWT verification using an RSA public key fetched from an external JWKS endpoint.
 - **HTTP validation** — UUID checks, bounded JSON bodies, text validation and reply pagination.
@@ -53,8 +53,9 @@ flowchart LR
 | `adapters` | PostgreSQL queries and Redis operations |
 | `security/jwt` | JWKS fetching and RS256 token verification |
 | `app` | Component initialization, HTTP startup and shutdown |
+| `reactionsync` | Ordered event processing, retries and post-commit acknowledgements |
 
-**Data ownership:** PostgreSQL stores posts, thread relationships and reply counts. Redis holds reaction membership, feed queues and seen-post sets. Reply counts are updated in PostgreSQL transactions; displayed like/dislike counts are read from Redis.
+**Data ownership:** PostgreSQL stores posts, thread relationships, reply counts and asynchronously synchronized per-user reactions. Redis holds live reaction membership, its event log, feed queues and seen-post sets. SQL reaction counters are updated in the same transaction as membership; displayed counts are read from Redis. See [reaction synchronization and recovery](docs/reactions.md).
 
 <details>
 <summary><strong>Project layout</strong></summary>
@@ -62,7 +63,8 @@ flowchart LR
 ```text
 cmd/
 ├── api/                    # HTTP entry point
-└── migrate/                # Standalone Goose migration command
+├── migrate/                # Standalone Goose migration command
+└── reactions/              # Explicit offline import / restore
 migrations/                 # Embedded SQL: posts table, constraints and indexes
 docs/database.md            # Schema, relationships and migration workflow
 internal/
@@ -71,6 +73,7 @@ internal/
 ├── domain/                 # Models and errors
 ├── logger/                 # Structured JSON logging
 ├── migrator/               # Goose provider and migration operations
+├── reactionsync/           # Ordered background reaction projection
 ├── security/jwt/           # JWKS client and token verifier
 ├── adapters/
 │   ├── postgresql/         # Post repository
@@ -174,13 +177,17 @@ or `-timeout 10m up` to change the default five-minute deadline.
 
 ### 5. Run
 
+If upgrading a deployment with existing Redis reactions, first stop all API
+instances, back up both stores and run `go run ./cmd/reactions -offline import`.
+Do **not** use import after Redis data loss; use the [restore procedure](docs/reactions.md#restore-redis-after-data-loss).
+
 ```sh
 go run ./cmd/api
 ```
 
-The application checks PostgreSQL and Redis connectivity and fetches the JWT public key before starting HTTP. Failed initialization aborts startup.
+The application checks PostgreSQL/Redis connectivity, the reaction schema and maintenance barrier, initializes the reaction stream and fetches the JWT public key before starting HTTP. Failed initialization aborts startup. A single elected background worker synchronizes reactions across all API instances.
 
-On `SIGINT` or `SIGTERM`, the server stops accepting requests, waits for active requests within the shutdown deadline, then releases its storage connections. Connections are forcibly closed if the deadline expires.
+On `SIGINT` or `SIGTERM`, the server stops accepting requests, waits for active HTTP requests within the shutdown deadline, stops the reaction worker, then releases storage connections. HTTP connections are forcibly closed if the drain deadline expires; remaining reaction events are processed after restart.
 
 ## HTTP API
 
@@ -376,8 +383,8 @@ see [database testing](docs/database.md#integration-tests).
 ## Current boundaries
 
 - **Infrastructure is external.** Provision PostgreSQL/Redis yourself and run the included migrations before starting the API; container-based setup is not included.
-- **Redis is required for reactions.** Reaction membership is not persisted or synchronized to PostgreSQL by this service; clearing Redis loses those reactions.
-- **Reply ordering uses PostgreSQL counters.** Displayed like counts come from Redis, so current ordering can differ from the live reaction counts.
+- **Reaction persistence is asynchronous.** PostgreSQL retains synchronized reactions, but losing Redis before projection can lose accepted events. Redis requires persistence, non-evicting storage and backlog/retention monitoring; see [operations and recovery](docs/reactions.md).
+- **Reply ordering uses PostgreSQL counters.** Displayed counts come from Redis; SQL ordering can lag behind live reactions until synchronization catches up.
 - **Feed pages are bounded, not guaranteed full.** Responses contain at most 20 posts and may be shorter or empty when the bounded scan finds no eligible candidates or queued posts were deleted. A later request continues the saved scan; an empty page does not necessarily mean the database has no older posts. Ranking is a basic freshness/engagement heuristic, not personalization. `HEAD /feed` is rejected to avoid consuming entries.
 - **JWT keys are loaded at startup.** The current fetcher selects the first JWKS key; automatic key refresh and rotation are not implemented.
 

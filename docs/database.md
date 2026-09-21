@@ -6,9 +6,9 @@ not create tables or run migrations at startup.
 
 ## Data ownership
 
-- **PostgreSQL:** posts, replies, thread relationships, timestamps and reply counts.
-- **Redis:** like/dislike membership, feed queues and seen-post sets. There is no
-  PostgreSQL reactions table because the current application does not use one.
+- **PostgreSQL:** posts, replies, thread relationships, timestamps, counters,
+  durable reaction membership and event-processing receipts.
+- **Redis:** live like/dislike membership, reaction events, feed queues and seen-post sets.
 - **External authentication service:** users. `author_id` is a user UUID, not a
   foreign key to a local table.
 - **Goose:** `goose_db_version`, created and managed by the migration library.
@@ -67,8 +67,7 @@ not editable through the current API; manual imports must preserve this invarian
 - `reply_count` is incremented/decremented in the repository transaction for the
   **direct parent**, not all ancestors. No SQL trigger duplicates that work.
 
-**Existing application limitations:** like/dislike snapshots are not synchronized
-from Redis; the schema does not change that behavior. Also, `DeletePost` currently
+**Existing application limitation:** `DeletePost` currently
 requires an active parent when decrementing its counter, so deleting a reply after
 its parent was soft-deleted fails and rolls back. This is repository logic, not a
 foreign-key restriction; these migrations do not change that workflow.
@@ -84,6 +83,11 @@ foreign-key restriction; these migrations do not change that workflow.
 | `posts_root_id_idx` | `root_id`; non-null values | Find all root references during FK checks, including deleted replies |
 
 ## Run migrations
+
+Migration 3 adds `post_reactions` (one like/dislike per post and user) and
+`reaction_sync_events` (transactional deduplication receipts). Its worker updates
+`posts.like_count` / `dislike_count` asynchronously. See [reaction schema, import
+and recovery](reactions.md) before upgrading existing Redis data.
 
 The project embeds SQL migrations in a standalone command using
 [Goose](https://github.com/pressly/goose) **v3.28.0** and the existing pgx driver.
@@ -127,6 +131,7 @@ migrator use the same Goose lock; unrelated SQL tools do not automatically honor
 
 1. `00001_create_posts.sql`: creates `posts`, constraints and database comments.
 2. `00002_add_posts_indexes.sql`: adds query and foreign-key indexes.
+3. `00003_add_reactions.sql`: adds durable reaction membership and processed-event receipts.
 
 Each file has `-- +goose Up` and `-- +goose Down` sections and runs in a transaction.
 If the second migration fails, the first can remain applied; fix the cause and run
@@ -141,8 +146,9 @@ schema setup. Future indexes on a large live table may require a separate
 go run ./cmd/migrate down
 ```
 
-**Destructive:** from version 2, the first `down` removes only indexes; the next
-`down` drops `posts` and all stored posts/replies. Use backups before destructive
+**Destructive:** from version 3, the first `down` removes durable reactions and
+event receipts (stop the worker/API first); the next removes indexes; the next
+drops `posts` and all stored posts/replies. Use backups before destructive
 schema changes. Normal production evolution should use new forward migrations.
 
 ### Existing database

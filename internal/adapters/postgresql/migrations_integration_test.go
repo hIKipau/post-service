@@ -74,15 +74,15 @@ func TestMigrationsIntegration(t *testing.T) {
 	t.Cleanup(func() { _ = provider.Close() })
 	assertVersion(t, ctx, provider, 0)
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 2 {
+	if err != nil || len(results) != 3 {
 		t.Fatalf("initial up = %v, %v", results, err)
 	}
-	assertVersion(t, ctx, provider, 2)
+	assertVersion(t, ctx, provider, 3)
 	if results, err := provider.Up(ctx); err != nil || len(results) != 0 {
 		t.Fatalf("repeated up = %v, %v", results, err)
 	}
 	statuses, err := provider.Status(ctx)
-	if err != nil || len(statuses) != 2 {
+	if err != nil || len(statuses) != 3 {
 		t.Fatalf("status = %v, %v", statuses, err)
 	}
 	for _, status := range statuses {
@@ -200,6 +200,10 @@ func TestMigrationsIntegration(t *testing.T) {
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
+	assertVersion(t, ctx, provider, 2)
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatal(err)
+	}
 	assertVersion(t, ctx, provider, 1)
 	var rowCount int
 	if err := conn.QueryRow(ctx, "SELECT count(*) FROM posts").Scan(&rowCount); err != nil || rowCount != 3 {
@@ -216,7 +220,7 @@ func TestMigrationsIntegration(t *testing.T) {
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("reapply after rollback: %v", err)
 	}
-	assertVersion(t, ctx, provider, 2)
+	assertVersion(t, ctx, provider, 3)
 }
 
 // testPost builds an active post with unique IDs and explicit application-style timestamps.
