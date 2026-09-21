@@ -1,0 +1,100 @@
+# Local development stack. The authentication service is external.
+x-app: &app
+  image: post-service:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
+x-database-url: &database-url "postgres://postgres:${POSTGRES_PASSWORD:-local-password}@postgres:5432/post_service?sslmode=disable"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: post_service
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-password}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d post_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  migrate:
+    <<: *app
+    command: ["migrate", "up"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    environment:
+      ENV: ${ENV:-local}
+      HTTP_ADDRESS: 0.0.0.0:8080
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379/0
+      # localhost inside a container is not the host machine.
+      JWKS_URL: ${DOCKER_JWKS_URL:-http://host.docker.internal:8081/.well-known/jwks.json}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-5s}
+      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-10s}
+      HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:-60s}
+      HTTP_READ_HEADER_TIMEOUT: ${HTTP_READ_HEADER_TIMEOUT:-5s}
+      STARTUP_TIMEOUT: ${STARTUP_TIMEOUT:-10s}
+      HTTP_SHUTDOWN_TIMEOUT: ${HTTP_SHUTDOWN_TIMEOUT:-10s}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Allow HTTP drain plus worker shutdown before Docker sends SIGKILL.
+    stop_grace_period: ${DOCKER_STOP_GRACE_PERIOD:-30s}
+
+volumes:
+  postgres-data:
+  redis-data:
